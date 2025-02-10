@@ -3,7 +3,8 @@ import {
   getAllTickets,
   sellTickets,
   getSalesReport,
-  addTicketTypes, // Updated function name
+  addTicketTypes,
+  updateTicketPrices
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -18,6 +19,8 @@ router.post("/sell", sellTickets);
 router.get("/report", getSalesReport);
 
 // 🟢 POST /api/tickets/type - Add multiple ticket types
-router.post("/type", addTicketTypes);
+router.post("/add-type", addTicketTypes);
+
+router.patch("/update-prices", updateTicketPrices);
 
 export default router;
