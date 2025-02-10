@@ -3,6 +3,7 @@ import {
   getAllTickets,
   sellTickets,
   getSalesReport,
+  addTicketTypes, // Updated function name
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -15,5 +16,8 @@ router.post("/sell", sellTickets);
 
 // 🟢 GET /api/tickets/report - Get ticket sales report
 router.get("/report", getSalesReport);
+
+// 🟢 POST /api/tickets/type - Add multiple ticket types
+router.post("/type", addTicketTypes);
 
 export default router;
