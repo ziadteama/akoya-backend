@@ -316,31 +316,55 @@ export const updateTicketValidation = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-export const checkTicketStatus = async (req, res) => {
-  const { id } = req.params;
+export const getTicketById = async (req, res) => {
+    const { id } = req.params;
 
-  try {
-    const query = `
-            SELECT id, status, valid 
-            FROM tickets 
-            WHERE id = $1;
-        `;
+    try {
+        const result = await pool.query(
+            `SELECT t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
+                    tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description
+             FROM tickets t
+             JOIN ticket_types tt ON t.ticket_type_id = tt.id
+             WHERE t.id = $1`,
+            [id]
+        );
 
-    const result = await pool.query(query, [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Ticket not found" });
+        }
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Ticket not found" });
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
     }
+};
 
-    const ticket = result.rows[0];
+export const refundTickets = async (req, res) => {
+    try {
+        const { ticketIds } = req.body; // Expecting an array of ticket IDs
 
-    res.json({
-      id: ticket.id,
-      valid: ticket.valid,
-      status: ticket.status ,
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error" });
-  }
+        if (!Array.isArray(ticketIds) || ticketIds.length === 0) {
+            return res.status(400).json({ message: "Invalid request. Provide an array of ticket IDs." });
+        }
+
+        // Execute the bulk update query
+        const result = await pool.query(
+            `UPDATE tickets 
+             SET status = 'available', sold_at = NULL, sold_price = NULL 
+             WHERE id = ANY($1) AND status = 'sold'
+             RETURNING id;`, 
+            [ticketIds]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "No valid tickets were refunded. Ensure tickets are sold." });
+        }
+
+        res.json({ message: "Refund successful", refundedTickets: result.rows });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
+    }
 };
