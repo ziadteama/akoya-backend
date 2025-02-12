@@ -8,6 +8,7 @@ import {
   generateTickets,
   markTicketAsSold,
   updateTicketValidation,
+  checkTicketStatus,
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -15,6 +16,8 @@ const router = express.Router();
 router.get("/", getAllTickets);
 
 router.get("/report", getSalesReport);
+
+router.get("/:id/status", checkTicketStatus);
 
 router.post("/sell", sellTickets);
 

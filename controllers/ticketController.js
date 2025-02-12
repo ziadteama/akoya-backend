@@ -114,11 +114,9 @@ export const addTicketTypes = async (req, res) => {
 
       // Validate price
       if (!price || isNaN(price) || price <= 0) {
-        return res
-          .status(400)
-          .json({
-            message: `Invalid price for category ${category} - ${subcategory}`,
-          });
+        return res.status(400).json({
+          message: `Invalid price for category ${category} - ${subcategory}`,
+        });
       }
 
       // Insert into ticket_types
@@ -131,12 +129,10 @@ export const addTicketTypes = async (req, res) => {
       insertedTickets.push(result.rows[0]);
     }
 
-    res
-      .status(201)
-      .json({
-        message: "Ticket types added successfully",
-        ticketTypes: insertedTickets,
-      });
+    res.status(201).json({
+      message: "Ticket types added successfully",
+      ticketTypes: insertedTickets,
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error" });
@@ -180,137 +176,171 @@ export const updateTicketPrices = async (req, res) => {
 };
 
 export const generateTickets = async (req, res) => {
-    try {
-        const { tickets } = req.body; // Expecting an array of { ticket_type_id, quantity }
+  try {
+    const { tickets } = req.body; // Expecting an array of { ticket_type_id, quantity }
 
-        if (!tickets || !Array.isArray(tickets) || tickets.length === 0) {
-            return res.status(400).json({ message: "Invalid request format" });
-        }
+    if (!tickets || !Array.isArray(tickets) || tickets.length === 0) {
+      return res.status(400).json({ message: "Invalid request format" });
+    }
 
-        const generatedTicketIds = [];
+    const generatedTicketIds = [];
 
-        for (const ticket of tickets) {
-            const { ticket_type_id, quantity } = ticket;
+    for (const ticket of tickets) {
+      const { ticket_type_id, quantity } = ticket;
 
-            if (!ticket_type_id || !quantity || quantity < 1) {
-                return res.status(400).json({ message: `Invalid data for ticket type ID ${ticket_type_id}` });
-            }
+      if (!ticket_type_id || !quantity || quantity < 1) {
+        return res
+          .status(400)
+          .json({
+            message: `Invalid data for ticket type ID ${ticket_type_id}`,
+          });
+      }
 
-            const insertQuery = `
+      const insertQuery = `
                 INSERT INTO tickets (ticket_type_id, status, valid, sold_at)
                 VALUES ($1, 'available', true, NULL)
                 RETURNING id;
             `;
 
-            for (let i = 0; i < quantity; i++) {
-                const result = await pool.query(insertQuery, [ticket_type_id]);
-                generatedTicketIds.push(result.rows[0].id);
-            }
-        }
-
-        res.json({ message: "Tickets generated successfully", generatedTicketIds });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+      for (let i = 0; i < quantity; i++) {
+        const result = await pool.query(insertQuery, [ticket_type_id]);
+        generatedTicketIds.push(result.rows[0].id);
+      }
     }
+
+    res.json({ message: "Tickets generated successfully", generatedTicketIds });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
 export const markTicketAsSold = async (req, res) => {
-    const { id } = req.params;
+  const { id } = req.params;
 
-    try {
-        // Check ticket status
-        const checkQuery = `SELECT status, valid FROM tickets WHERE id = $1`;
-        const checkResult = await pool.query(checkQuery, [id]);
+  try {
+    // Check ticket status
+    const checkQuery = `SELECT status, valid FROM tickets WHERE id = $1`;
+    const checkResult = await pool.query(checkQuery, [id]);
 
-        if (checkResult.rows.length === 0) {
-            return res.status(404).json({ message: "Ticket not found" });
-        }
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
 
-        const { status, valid } = checkResult.rows[0];
+    const { status, valid } = checkResult.rows[0];
 
-        if (status === 'sold') {
-            return res.status(400).json({ message: "Ticket is already sold" });
-        }
+    if (status === "sold") {
+      return res.status(400).json({ message: "Ticket is already sold" });
+    }
 
-        if (!valid) {
-            return res.status(400).json({ message: "Ticket is not valid" });
-        }
+    if (!valid) {
+      return res.status(400).json({ message: "Ticket is not valid" });
+    }
 
-        // Mark the ticket as sold
-        const updateQuery = `
+    // Mark the ticket as sold
+    const updateQuery = `
             UPDATE tickets 
             SET status = 'sold' 
             WHERE id = $1 
             RETURNING *;
         `;
-        const updateResult = await pool.query(updateQuery, [id]);
+    const updateResult = await pool.query(updateQuery, [id]);
 
-        res.json({ message: "Ticket marked as sold", ticket: updateResult.rows[0] });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
-    }
+    res.json({
+      message: "Ticket marked as sold",
+      ticket: updateResult.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
 export const updateTicketValidation = async (req, res) => {
-    const { tickets, valid } = req.body; // Expecting an array of ticket IDs and the new validity status
+  const { tickets, valid } = req.body; // Expecting an array of ticket IDs and the new validity status
 
-    if (!Array.isArray(tickets) || tickets.length === 0) {
-        return res.status(400).json({ message: "No tickets provided" });
-    }
+  if (!Array.isArray(tickets) || tickets.length === 0) {
+    return res.status(400).json({ message: "No tickets provided" });
+  }
 
-    try {
-        // Get current validation statuses of the provided ticket IDs
-        const checkQuery = `
+  try {
+    // Get current validation statuses of the provided ticket IDs
+    const checkQuery = `
             SELECT id, valid 
             FROM tickets 
             WHERE id = ANY($1);
         `;
-        const checkResult = await pool.query(checkQuery, [tickets]);
+    const checkResult = await pool.query(checkQuery, [tickets]);
 
-        if (checkResult.rows.length === 0) {
-            return res.status(404).json({ message: "No matching tickets found" });
-        }
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "No matching tickets found" });
+    }
 
-        let alreadyInState = [];
-        let toUpdate = [];
+    let alreadyInState = [];
+    let toUpdate = [];
 
-        // Filter tickets based on their current state
-        checkResult.rows.forEach(ticket => {
-            if (ticket.valid === valid) {
-                alreadyInState.push(ticket.id);
-            } else {
-                toUpdate.push(ticket.id);
-            }
-        });
+    // Filter tickets based on their current state
+    checkResult.rows.forEach((ticket) => {
+      if (ticket.valid === valid) {
+        alreadyInState.push(ticket.id);
+      } else {
+        toUpdate.push(ticket.id);
+      }
+    });
 
-        if (toUpdate.length > 0) {
-            // Update only the tickets that need to change
-            const updateQuery = `
+    if (toUpdate.length > 0) {
+      // Update only the tickets that need to change
+      const updateQuery = `
                 UPDATE tickets 
                 SET valid = $1 
                 WHERE id = ANY($2) 
                 RETURNING *;
             `;
-            const updateResult = await pool.query(updateQuery, [valid, toUpdate]);
-            
-            res.json({
-                message: `Successfully updated ${updateResult.rowCount} tickets`,
-                updatedTickets: updateResult.rows,
-                alreadyInState: alreadyInState.length > 0 ? alreadyInState : null
-            });
-        } else {
-            // No tickets needed updating
-            res.json({
-                message: "No tickets were updated as they were already in the requested state",
-                alreadyInState
-            });
-        }
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
-    }
-};
+      const updateResult = await pool.query(updateQuery, [valid, toUpdate]);
 
+      res.json({
+        message: `Successfully updated ${updateResult.rowCount} tickets`,
+        updatedTickets: updateResult.rows,
+        alreadyInState: alreadyInState.length > 0 ? alreadyInState : null,
+      });
+    } else {
+      // No tickets needed updating
+      res.json({
+        message:
+          "No tickets were updated as they were already in the requested state",
+        alreadyInState,
+      });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+export const checkTicketStatus = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const query = `
+            SELECT id, status, valid 
+            FROM tickets 
+            WHERE id = $1;
+        `;
+
+    const result = await pool.query(query, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    const ticket = result.rows[0];
+
+    res.json({
+      id: ticket.id,
+      valid: ticket.valid,
+      status: ticket.status ,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
