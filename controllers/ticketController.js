@@ -10,73 +10,85 @@ export const getAllTickets = async (req, res) => {
   }
 };
 
-
 export const sellTickets = async (req, res) => {
   try {
-    const { tickets } = req.body; // Expecting an array of { ticket_type_id, quantity }
+    const { tickets } = req.body;
 
-    if (!tickets || tickets.length === 0) {
+    if (!Array.isArray(tickets) || tickets.length === 0) {
       return res.status(400).json({ message: "No tickets selected" });
     }
 
-    const ticketTypeIds = tickets.map(ticket => ticket.ticket_type_id);
+    // Get ticket prices
+    const ticketTypeIds = tickets.map((ticket) => ticket.ticket_type_id);
     const priceQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
-    const priceResult = await pool.query(priceQuery, [ticketTypeIds]);
+    const { rows: priceRows } = await pool.query(priceQuery, [ticketTypeIds]);
 
-    if (priceResult.rows.length === 0) {
+    if (priceRows.length === 0) {
       return res.status(404).json({ message: "No valid ticket types found" });
     }
 
-    const priceMap = new Map(priceResult.rows.map(row => [row.id, row.price]));
+    const priceMap = new Map(priceRows.map((row) => [row.id, row.price]));
 
-    const values = [];
-    const params = [];
-    let paramIndex = 1;
+    // Validate tickets
+    const validTickets = tickets
+      .filter(
+        ({ ticket_type_id, quantity }) =>
+          priceMap.has(ticket_type_id) && quantity > 0
+      )
+      .flatMap(({ ticket_type_id, quantity }) =>
+        Array(quantity).fill([
+          ticket_type_id,
+          "sold",
+          true,
+          new Date(),
+          priceMap.get(ticket_type_id),
+        ])
+      );
 
-    tickets.forEach(({ ticket_type_id, quantity }) => {
-      const ticketPrice = priceMap.get(ticket_type_id);
-      if (!ticketPrice) {
-        return res.status(404).json({ message: `Ticket type ${ticket_type_id} not found` });
-      }
-
-      for (let i = 0; i < quantity; i++) {
-        values.push(`($${paramIndex}, 'sold', true, NOW(), $${paramIndex + 1})`);
-        params.push(ticket_type_id, ticketPrice);
-        paramIndex += 2;
-      }
-    });
-
-    if (values.length === 0) {
+    if (validTickets.length === 0) {
       return res.status(400).json({ message: "No valid tickets to sell" });
     }
 
+    // Insert tickets in bulk using UNNEST
     const query = `
-      INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price)
-      VALUES ${values.join(", ")}
-      RETURNING *;
-    `;
+        INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price)
+        SELECT * FROM UNNEST($1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[])
+        RETURNING *;
+      `;
+    const result = await pool.query(query, [
+      validTickets.map((row) => row[0]),
+      validTickets.map((row) => row[1]),
+      validTickets.map((row) => row[2]),
+      validTickets.map((row) => row[3]),
+      validTickets.map((row) => row[4]),
+    ]);
 
-    const result = await pool.query(query, params);
-
-    res.json({ message: "Tickets sold successfully", soldTickets: result.rows });
+    res.json({
+      message: "Tickets sold successfully",
+      soldTickets: result.rows,
+    });
   } catch (error) {
     console.error("Error selling tickets:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-
-
-
 export const getSalesReport = async (req, res) => {
   const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return res
+      .status(400)
+      .json({ message: "Start date and end date are required" });
+  }
+
   try {
     const result = await pool.query(
-      `SELECT SUM(tt.price) AS total_revenue
-             FROM tickets t
-             JOIN ticket_types tt ON t.ticket_type_id = tt.id
-             WHERE t.status = 'sold'
-             AND t.sold_at BETWEEN $1 AND $2`,
+      `SELECT COALESCE(SUM(tt.price), 0) AS total_revenue
+         FROM tickets t
+         JOIN ticket_types tt ON t.ticket_type_id = tt.id
+         WHERE t.status = 'sold'
+         AND t.sold_at BETWEEN $1 AND $2`,
       [startDate, endDate]
     );
     res.json(result.rows[0]);
@@ -130,87 +142,80 @@ export const addTicketTypes = async (req, res) => {
 
 export const updateTicketPrices = async (req, res) => {
   try {
-    const { tickets } = req.body; // Expecting an array of { id, price }
+    const { tickets } = req.body;
 
-    if (!tickets || !Array.isArray(tickets) || tickets.length === 0) {
+    if (!Array.isArray(tickets) || tickets.length === 0) {
       return res.status(400).json({ message: "Invalid request format" });
     }
 
-    const queries = [];
-    for (const ticket of tickets) {
-      const { id, price } = ticket;
-
-      if (!id || !price || price <= 0) {
-        return res
-          .status(400)
-          .json({ message: `Invalid data for ticket ID ${id}` });
-      }
-
-      queries.push(
-        pool.query(
-          `UPDATE ticket_types SET price = $1 WHERE id = $2 RETURNING *`,
-          [price, id]
-        )
-      );
+    const validTickets = tickets.filter(({ id, price }) => id && price > 0);
+    if (validTickets.length === 0) {
+      return res.status(400).json({ message: "No valid tickets to update" });
     }
 
-    const results = await Promise.all(queries);
-    const updatedTickets = results.map((result) => result.rows[0]);
+    const query = `
+        UPDATE ticket_types AS tt
+        SET price = new_data.price
+        FROM (SELECT UNNEST($1::int[]) AS id, UNNEST($2::numeric[]) AS price) AS new_data
+        WHERE tt.id = new_data.id
+        RETURNING tt.*;
+      `;
 
-    res.json({ message: "Prices updated successfully", updatedTickets });
+    const result = await pool.query(query, [
+      validTickets.map((ticket) => ticket.id),
+      validTickets.map((ticket) => ticket.price),
+    ]);
+
+    res.json({
+      message: "Prices updated successfully",
+      updatedTickets: result.rows,
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-
-
 export const generateTickets = async (req, res) => {
   try {
-    const { tickets } = req.body; // Expecting an array of { ticket_type_id, quantity }
+    const { tickets } = req.body;
 
-    if (!tickets || !Array.isArray(tickets) || tickets.length === 0) {
+    if (!Array.isArray(tickets) || tickets.length === 0) {
       return res.status(400).json({ message: "Invalid request format" });
     }
 
-    const values = [];
-    const params = [];
-    let paramIndex = 1; // Start parameter index for PostgreSQL ($1, $2...)
+    const validTickets = tickets
+      .filter(({ ticket_type_id, quantity }) => ticket_type_id && quantity > 0)
+      .flatMap(({ ticket_type_id, quantity }) =>
+        Array(quantity).fill([ticket_type_id, "available", true, null])
+      );
 
-    tickets.forEach(({ ticket_type_id, quantity }) => {
-      if (!ticket_type_id || !quantity || quantity < 1) {
-        return res
-          .status(400)
-          .json({ message: `Invalid data for ticket type ID ${ticket_type_id}` });
-      }
-      for (let i = 0; i < quantity; i++) {
-        values.push(`($${paramIndex}, 'available', true, NULL)`);
-        params.push(ticket_type_id);
-        paramIndex++;
-      }
-    });
-
-    if (values.length === 0) {
-      return res.status(400).json({ message: "No valid tickets to insert" });
+    if (validTickets.length === 0) {
+      return res.status(400).json({ message: "No valid tickets to generate" });
     }
 
     const query = `
-      INSERT INTO tickets (ticket_type_id, status, valid, sold_at)
-      VALUES ${values.join(", ")}
-      RETURNING id;
-    `;
+        INSERT INTO tickets (ticket_type_id, status, valid, sold_at)
+        SELECT * FROM UNNEST($1::int[], $2::text[], $3::boolean[], $4::timestamptz[])
+        RETURNING id;
+      `;
 
-    const result = await pool.query(query, params);
-    const generatedTicketIds = result.rows.map(row => row.id);
+    const result = await pool.query(query, [
+      validTickets.map((row) => row[0]),
+      validTickets.map((row) => row[1]),
+      validTickets.map((row) => row[2]),
+      validTickets.map((row) => row[3]),
+    ]);
 
-    res.json({ message: "Tickets generated successfully", generatedTicketIds });
+    res.json({
+      message: "Tickets generated successfully",
+      generatedTicketIds: result.rows.map((row) => row.id),
+    });
   } catch (error) {
     console.error("Error generating tickets:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 export const markTicketAsSold = async (req, res) => {
   const { id } = req.params;
@@ -314,54 +319,59 @@ export const updateTicketValidation = async (req, res) => {
   }
 };
 export const getTicketById = async (req, res) => {
-    const { id } = req.params;
+  const { id } = req.params;
 
-    try {
-        const result = await pool.query(
-            `SELECT t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
                     tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description
              FROM tickets t
              JOIN ticket_types tt ON t.ticket_type_id = tt.id
              WHERE t.id = $1`,
-            [id]
-        );
+      [id]
+    );
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: "Ticket not found" });
-        }
-
-        res.json(result.rows[0]);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Ticket not found" });
     }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
 export const refundTickets = async (req, res) => {
-    try {
-        const { ticketIds } = req.body; // Expecting an array of ticket IDs
+  try {
+    const { ticketIds } = req.body; // Expecting an array of ticket IDs
 
-        if (!Array.isArray(ticketIds) || ticketIds.length === 0) {
-            return res.status(400).json({ message: "Invalid request. Provide an array of ticket IDs." });
-        }
+    if (!Array.isArray(ticketIds) || ticketIds.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Invalid request. Provide an array of ticket IDs." });
+    }
 
-        // Execute the bulk update query
-        const result = await pool.query(
-            `UPDATE tickets 
+    // Execute the bulk update query
+    const result = await pool.query(
+      `UPDATE tickets 
              SET status = 'available', sold_at = NULL, sold_price = NULL 
              WHERE id = ANY($1) AND status = 'sold'
-             RETURNING id;`, 
-            [ticketIds]
-        );
+             RETURNING id;`,
+      [ticketIds]
+    );
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: "No valid tickets were refunded. Ensure tickets are sold." });
-        }
-
-        res.json({ message: "Refund successful", refundedTickets: result.rows });
-
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Server error" });
+    if (result.rows.length === 0) {
+      return res
+        .status(404)
+        .json({
+          message: "No valid tickets were refunded. Ensure tickets are sold.",
+        });
     }
+
+    res.json({ message: "Refund successful", refundedTickets: result.rows });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
