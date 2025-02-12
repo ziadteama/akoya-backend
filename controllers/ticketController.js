@@ -1,4 +1,40 @@
 import pool from "../db.js";
+import bcrypt from "bcrypt";
+
+export const loginUser = async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // Check if both fields are provided
+    if (!username || !password) {
+      return res.status(400).json({ message: "Username and password are required" });
+    }
+
+    // Fetch user details from the database
+    const query = `SELECT id, username, password_hash, role FROM users WHERE username = $1`;
+    const result = await pool.query(query, [username]);
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ message: "Invalid username or password" });
+    }
+
+    const user = result.rows[0];
+
+    // Compare the provided password with the stored hash
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid username or password" });
+    }
+
+    // If credentials are valid, return the user role
+    res.json({ message: "Login successful", role: user.role });
+
+  } catch (error) {
+    console.error("Error logging in:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
 
 export const getAllTickets = async (req, res) => {
   try {

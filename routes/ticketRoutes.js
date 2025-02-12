@@ -10,9 +10,12 @@ import {
   updateTicketValidation,
   getTicketById,
   refundTickets,
+  loginUser,
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
+
+router.post("/login", loginUser);
 
 /**
  * @route GET /
