@@ -11,6 +11,7 @@ import {
   getTicketById,
   refundTickets,
   loginUser,
+  getAllTicketTypes
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -23,6 +24,8 @@ router.post("/login", loginUser);
  * @access Public
  */
 router.get("/", getAllTickets);
+
+router.get("/ticket-types",getAllTicketTypes)
 
 /**
  * @route GET /report

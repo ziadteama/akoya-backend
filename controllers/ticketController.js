@@ -7,7 +7,9 @@ export const loginUser = async (req, res) => {
 
     // Check if both fields are provided
     if (!username || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+      return res
+        .status(400)
+        .json({ message: "Username and password are required" });
     }
 
     // Fetch user details from the database
@@ -29,7 +31,6 @@ export const loginUser = async (req, res) => {
 
     // If credentials are valid, return the user role
     res.json({ message: "Login successful", role: user.role });
-
   } catch (error) {
     console.error("Error logging in:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -43,6 +44,16 @@ export const getAllTickets = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).send("Server error");
+  }
+};
+
+export const getAllTicketTypes = async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM ticket_types order by id ");
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
@@ -398,11 +409,9 @@ export const refundTickets = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res
-        .status(404)
-        .json({
-          message: "No valid tickets were refunded. Ensure tickets are sold.",
-        });
+      return res.status(404).json({
+        message: "No valid tickets were refunded. Ensure tickets are sold.",
+      });
     }
 
     res.json({ message: "Refund successful", refundedTickets: result.rows });
