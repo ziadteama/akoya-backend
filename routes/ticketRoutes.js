@@ -2,7 +2,6 @@ import express from "express";
 import {
   getAllTickets,
   sellTickets,
-  getSalesReport,
   addTicketTypes,
   updateTicketPrices,
   generateTickets,
@@ -11,7 +10,9 @@ import {
   getTicketById,
   refundTickets,
   loginUser,
-  getAllTicketTypes
+  getAllTicketTypes,
+  getTicketsBetweenDates,
+  getTicketsByDate,
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -25,21 +26,18 @@ router.post("/login", loginUser);
  */
 router.get("/", getAllTickets);
 
-router.get("/ticket-types",getAllTicketTypes)
-
-/**
- * @route GET /report
- * @desc Get sales report for tickets
- * @access Public
- */
-router.get("/report", getSalesReport);
+router.get("/ticket-types", getAllTicketTypes);
 
 /**
  * @route GET /:id
  * @desc Get a specific ticket by ID
  * @access Public
  */
-router.get("/:id", getTicketById);
+router.get("/ticket/:id", getTicketById);
+
+router.get("/day-report", getTicketsByDate);
+
+router.get("/between-dates-report", getTicketsBetweenDates );
 
 /**
  * @route POST /sell

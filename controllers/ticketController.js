@@ -119,31 +119,77 @@ export const sellTickets = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
-export const getSalesReport = async (req, res) => {
-  const { startDate, endDate } = req.query;
-
-  if (!startDate || !endDate) {
-    return res
-      .status(400)
-      .json({ message: "Start date and end date are required" });
-  }
-
+export const getTicketsByDate = async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT COALESCE(SUM(tt.price), 0) AS total_revenue
-         FROM tickets t
-         JOIN ticket_types tt ON t.ticket_type_id = tt.id
-         WHERE t.status = 'sold'
-         AND t.sold_at BETWEEN $1 AND $2`,
-      [startDate, endDate]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Server error");
+    const { date } = req.query;
+
+    // Ensure date is provided
+    if (!date) {
+      return res.status(400).json({ error: "Please provide a valid date (YYYY-MM-DD)." });
+    }
+
+    const query = `
+      SELECT 
+          tt.category, 
+          tt.subcategory, 
+          COUNT(t.id) AS total_tickets, 
+          SUM(t.sold_price) AS total_revenue
+      FROM tickets t
+      JOIN ticket_types tt ON t.ticket_type_id = tt.id
+      WHERE t.valid = TRUE 
+      AND t.status = 'sold' 
+      AND DATE(t.sold_at) = $1
+      GROUP BY tt.category, tt.subcategory;
+    `;
+
+    const { rows } = await pool.query(query, [date]);
+
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("Error fetching tickets by date:", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
 };
+
+
+export const getTicketsBetweenDates = async (req, res) => {
+  try {
+    let { startDate, endDate } = req.query;
+
+    // Ensure both dates are provided
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: "Please provide both startDate and endDate" });
+    }
+
+    // Validate date format
+    if (isNaN(new Date(startDate)) || isNaN(new Date(endDate))) {
+      return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD." });
+    }
+
+
+    const query = `
+      SELECT 
+          tt.category, 
+          tt.subcategory, 
+          COUNT(t.id) AS total_tickets, 
+          SUM(t.sold_price) AS total_revenue
+      FROM tickets t
+      JOIN ticket_types tt ON t.ticket_type_id = tt.id
+      WHERE t.valid = TRUE 
+      AND t.status = 'sold' 
+      AND t.sold_at BETWEEN $1 AND $2
+      GROUP BY tt.category, tt.subcategory;
+    `;
+
+    const { rows } = await pool.query(query, [startDate, endDate]);
+
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("Error fetching tickets:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
 
 export const addTicketTypes = async (req, res) => {
   try {
