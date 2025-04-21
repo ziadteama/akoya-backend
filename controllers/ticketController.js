@@ -49,7 +49,19 @@ export const getAllTickets = async (req, res) => {
 
 export const getAllTicketTypes = async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM ticket_types order by id ");
+    const { archived } = req.query;
+
+    let query = "SELECT * FROM ticket_types";
+    let values = [];
+
+    if (archived !== undefined) {
+      query += " WHERE archived = $1";
+      values.push(archived === "true");
+    }
+
+    query += " ORDER BY id";
+
+    const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (err) {
     console.error(err.message);
@@ -125,7 +137,9 @@ export const getTicketsByDate = async (req, res) => {
 
     // Ensure date is provided
     if (!date) {
-      return res.status(400).json({ error: "Please provide a valid date (YYYY-MM-DD)." });
+      return res
+        .status(400)
+        .json({ error: "Please provide a valid date (YYYY-MM-DD)." });
     }
 
     const query = `
@@ -151,21 +165,23 @@ export const getTicketsByDate = async (req, res) => {
   }
 };
 
-
 export const getTicketsBetweenDates = async (req, res) => {
   try {
     let { startDate, endDate } = req.query;
 
     // Ensure both dates are provided
     if (!startDate || !endDate) {
-      return res.status(400).json({ error: "Please provide both startDate and endDate" });
+      return res
+        .status(400)
+        .json({ error: "Please provide both startDate and endDate" });
     }
 
     // Validate date format
     if (isNaN(new Date(startDate)) || isNaN(new Date(endDate))) {
-      return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD." });
+      return res
+        .status(400)
+        .json({ error: "Invalid date format. Use YYYY-MM-DD." });
     }
-
 
     const query = `
       SELECT 
@@ -190,13 +206,14 @@ export const getTicketsBetweenDates = async (req, res) => {
   }
 };
 
-
 export const addTicketTypes = async (req, res) => {
   try {
     const { ticketTypes } = req.body;
 
     if (!Array.isArray(ticketTypes) || ticketTypes.length === 0) {
-      return res.status(400).json({ message: "Provide an array of ticket types" });
+      return res
+        .status(400)
+        .json({ message: "Provide an array of ticket types" });
     }
 
     const categories = [];
@@ -208,7 +225,9 @@ export const addTicketTypes = async (req, res) => {
       const { category, subcategory, price, description } = ticket;
 
       if (!price || isNaN(price) || price <= 0) {
-        return res.status(400).json({ message: `Invalid price for ${category} - ${subcategory}` });
+        return res
+          .status(400)
+          .json({ message: `Invalid price for ${category} - ${subcategory}` });
       }
 
       categories.push(category);
@@ -224,7 +243,12 @@ export const addTicketTypes = async (req, res) => {
       RETURNING *;
     `;
 
-    const result = await pool.query(query, [categories, subcategories, prices, descriptions]);
+    const result = await pool.query(query, [
+      categories,
+      subcategories,
+      prices,
+      descriptions,
+    ]);
 
     res.status(201).json({
       message: "Ticket types added successfully",
@@ -235,7 +259,6 @@ export const addTicketTypes = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 export const updateTicketPrices = async (req, res) => {
   try {
@@ -272,7 +295,6 @@ export const updateTicketPrices = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 export const generateTickets = async (req, res) => {
   try {
@@ -468,6 +490,42 @@ export const refundTickets = async (req, res) => {
     res.json({ message: "Refund successful", refundedTickets: result.rows });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const updateTicketTypeArchiveStatus = async (req, res) => {
+  try {
+    const { category, archived } = req.body;
+
+    if (!category || typeof archived !== "boolean") {
+      return res
+        .status(400)
+        .json({
+          message:
+            "Both 'category' and boolean 'archived' status are required.",
+        });
+    }
+
+    const query = `
+      UPDATE ticket_types
+      SET archived = $1
+      WHERE category = $2
+      RETURNING *;
+    `;
+
+    const { rows } = await pool.query(query, [archived, category]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Category not found." });
+    }
+
+    res.json({
+      message: `Category '${category}' archive status updated successfully.`,
+      updatedTicketTypes: rows,
+    });
+  } catch (error) {
+    console.error("Error updating archive status:", error);
     res.status(500).json({ message: "Server error" });
   }
 };

@@ -13,6 +13,7 @@ import {
   getAllTicketTypes,
   getTicketsBetweenDates,
   getTicketsByDate,
+  updateTicketTypeArchiveStatus
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -87,5 +88,8 @@ router.put("/validate", updateTicketValidation);
  * @access Public
  */
 router.put("/refund", refundTickets);
+
+router.patch("/archive-category", updateTicketTypeArchiveStatus);
+
 
 export default router;
