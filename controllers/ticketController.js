@@ -315,10 +315,18 @@ export const generateTickets = async (req, res) => {
     }
 
     const query = `
-        INSERT INTO tickets (ticket_type_id, status, valid, sold_at)
-        SELECT * FROM UNNEST($1::int[], $2::text[], $3::boolean[], $4::timestamptz[])
-        RETURNING id;
-      `;
+      WITH new_tickets AS (
+        SELECT 
+          UNNEST($1::int[]) AS ticket_type_id,
+          UNNEST($2::text[]) AS status,
+          UNNEST($3::boolean[]) AS valid,
+          UNNEST($4::timestamptz[]) AS sold_at
+      )
+      INSERT INTO tickets (ticket_type_id, status, valid, sold_at)
+      SELECT ticket_type_id, status, valid, sold_at
+      FROM new_tickets
+      RETURNING id;
+    `;
 
     const result = await pool.query(query, [
       validTickets.map((row) => row[0]),
