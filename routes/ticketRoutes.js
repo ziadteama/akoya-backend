@@ -65,7 +65,7 @@ router.post("/generate", generateTickets);
  * @desc Update ticket prices
  * @access Public
  */
-router.patch("/update-prices", updateTicketPrices);
+router.patch("/update-price", updateTicketPrices);
 
 /**
  * @route PUT /sell/:id

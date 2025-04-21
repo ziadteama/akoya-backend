@@ -193,45 +193,49 @@ export const getTicketsBetweenDates = async (req, res) => {
 
 export const addTicketTypes = async (req, res) => {
   try {
-    const { ticketTypes } = req.body; // Expecting an array of ticket objects
+    const { ticketTypes } = req.body;
 
     if (!Array.isArray(ticketTypes) || ticketTypes.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Invalid input: Provide an array of ticket types" });
+      return res.status(400).json({ message: "Provide an array of ticket types" });
     }
 
-    const insertedTickets = [];
+    const categories = [];
+    const subcategories = [];
+    const prices = [];
+    const descriptions = [];
 
     for (const ticket of ticketTypes) {
       const { category, subcategory, price, description } = ticket;
 
-      // Validate price
       if (!price || isNaN(price) || price <= 0) {
-        return res.status(400).json({
-          message: `Invalid price for category ${category} - ${subcategory}`,
-        });
+        return res.status(400).json({ message: `Invalid price for ${category} - ${subcategory}` });
       }
 
-      // Insert into ticket_types
-      const result = await pool.query(
-        `INSERT INTO ticket_types (category, subcategory, price, description) 
-                 VALUES ($1, $2, $3, $4) RETURNING *`,
-        [category, subcategory, price, description]
-      );
-
-      insertedTickets.push(result.rows[0]);
+      categories.push(category);
+      subcategories.push(subcategory);
+      prices.push(price);
+      descriptions.push(description);
     }
+
+    const query = `
+      INSERT INTO ticket_types (category, subcategory, price, description)
+      SELECT * FROM UNNEST($1::text[], $2::text[], $3::numeric[], $4::text[])
+      ON CONFLICT (category, subcategory) DO NOTHING
+      RETURNING *;
+    `;
+
+    const result = await pool.query(query, [categories, subcategories, prices, descriptions]);
 
     res.status(201).json({
       message: "Ticket types added successfully",
-      ticketTypes: insertedTickets,
+      ticketTypes: result.rows,
     });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 export const updateTicketPrices = async (req, res) => {
   try {
@@ -246,18 +250,18 @@ export const updateTicketPrices = async (req, res) => {
       return res.status(400).json({ message: "No valid tickets to update" });
     }
 
-    const query = `
-        UPDATE ticket_types AS tt
-        SET price = new_data.price
-        FROM (SELECT UNNEST($1::int[]) AS id, UNNEST($2::numeric[]) AS price) AS new_data
-        WHERE tt.id = new_data.id
-        RETURNING tt.*;
-      `;
+    const ids = validTickets.map((ticket) => ticket.id);
+    const prices = validTickets.map((ticket) => ticket.price);
 
-    const result = await pool.query(query, [
-      validTickets.map((ticket) => ticket.id),
-      validTickets.map((ticket) => ticket.price),
-    ]);
+    const query = `
+      UPDATE ticket_types AS tt
+      SET price = new_data.price
+      FROM (SELECT UNNEST($1::int[]) AS id, UNNEST($2::numeric[]) AS price) AS new_data
+      WHERE tt.id = new_data.id
+      RETURNING tt.*;
+    `;
+
+    const result = await pool.query(query, [ids, prices]);
 
     res.json({
       message: "Prices updated successfully",
@@ -268,6 +272,7 @@ export const updateTicketPrices = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 export const generateTickets = async (req, res) => {
   try {
