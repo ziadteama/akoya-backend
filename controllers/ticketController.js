@@ -338,42 +338,55 @@ export const generateTickets = async (req, res) => {
 };
 
 export const markTicketAsSold = async (req, res) => {
-  const { id } = req.params;
-
   try {
-    // Check ticket status
-    const checkQuery = `SELECT status, valid FROM tickets WHERE id = $1`;
-    const checkResult = await pool.query(checkQuery, [id]);
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Please provide an array of ticket IDs." });
+    }
+
+    // Check current ticket statuses
+    const checkQuery = `
+      SELECT id, status, valid FROM tickets WHERE id = ANY($1)
+    `;
+    const checkResult = await pool.query(checkQuery, [ids]);
 
     if (checkResult.rows.length === 0) {
-      return res.status(404).json({ message: "Ticket not found" });
+      return res.status(404).json({ message: "No matching tickets found." });
     }
 
-    const { status, valid } = checkResult.rows[0];
+    const validIdsToSell = checkResult.rows
+      .filter((ticket) => ticket.status !== "sold" && ticket.valid)
+      .map((ticket) => ticket.id);
 
-    if (status === "sold") {
-      return res.status(400).json({ message: "Ticket is already sold" });
+    if (validIdsToSell.length === 0) {
+      return res
+        .status(400)
+        .json({
+          message:
+            "No valid tickets available for selling (all tickets already sold or invalid).",
+        });
     }
 
-    if (!valid) {
-      return res.status(400).json({ message: "Ticket is not valid" });
-    }
-
-    // Mark the ticket as sold
+    // Mark valid tickets as sold
     const updateQuery = `
-            UPDATE tickets 
-            SET status = 'sold' 
-            WHERE id = $1 
-            RETURNING *;
-        `;
-    const updateResult = await pool.query(updateQuery, [id]);
+      UPDATE tickets
+      SET status = 'sold', sold_at = NOW()
+      WHERE id = ANY($1)
+      RETURNING *;
+    `;
+
+    const updateResult = await pool.query(updateQuery, [validIdsToSell]);
 
     res.json({
-      message: "Ticket marked as sold",
-      ticket: updateResult.rows[0],
+      message: `${updateResult.rowCount} ticket(s) marked as sold.`,
+      soldTickets: updateResult.rows,
+      skippedTickets: ids.filter((id) => !validIdsToSell.includes(id)),
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error marking tickets as sold:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -499,12 +512,9 @@ export const updateTicketTypeArchiveStatus = async (req, res) => {
     const { category, archived } = req.body;
 
     if (!category || typeof archived !== "boolean") {
-      return res
-        .status(400)
-        .json({
-          message:
-            "Both 'category' and boolean 'archived' status are required.",
-        });
+      return res.status(400).json({
+        message: "Both 'category' and boolean 'archived' status are required.",
+      });
     }
 
     const query = `

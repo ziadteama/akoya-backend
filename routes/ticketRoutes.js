@@ -73,7 +73,7 @@ router.patch("/update-price", updateTicketPrices);
  * @desc Mark a ticket as sold
  * @access Public
  */
-router.put("/sell/:id", markTicketAsSold);
+router.put("/mark-sold", markTicketAsSold);
 
 /**
  * @route PUT /validate
