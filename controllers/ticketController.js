@@ -35,9 +35,9 @@ export const loginUser = async (req, res) => {
       role: user.role,
       name: user.name,
       user_id: user.user_id,
-      id: user.id
+      id: user.id,
     });
-      } catch (error) {
+  } catch (error) {
     console.error("Error logging in:", error);
     res.status(500).json({ message: "Internal server error" });
   }
@@ -77,10 +77,12 @@ export const getAllTicketTypes = async (req, res) => {
 
 export const sellTickets = async (req, res) => {
   try {
-    const { tickets } = req.body;
+    const { tickets, user_id, description } = req.body;
 
-    if (!Array.isArray(tickets) || tickets.length === 0) {
-      return res.status(400).json({ message: "No tickets selected" });
+    if (!user_id || !Array.isArray(tickets) || tickets.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Missing user ID or ticket list" });
     }
 
     // Get ticket prices
@@ -94,7 +96,7 @@ export const sellTickets = async (req, res) => {
 
     const priceMap = new Map(priceRows.map((row) => [row.id, row.price]));
 
-    // Validate tickets
+    // Filter and expand tickets by quantity
     const validTickets = tickets
       .filter(
         ({ ticket_type_id, quantity }) =>
@@ -114,22 +116,42 @@ export const sellTickets = async (req, res) => {
       return res.status(400).json({ message: "No valid tickets to sell" });
     }
 
-    // Insert tickets in bulk using UNNEST
-    const query = `
-        INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price)
-        SELECT * FROM UNNEST($1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[])
-        RETURNING *;
-      `;
-    const result = await pool.query(query, [
-      validTickets.map((row) => row[0]),
-      validTickets.map((row) => row[1]),
-      validTickets.map((row) => row[2]),
-      validTickets.map((row) => row[3]),
-      validTickets.map((row) => row[4]),
+    // Create new order
+    const orderInsertQuery = `
+      INSERT INTO orders (user_id, description)
+      VALUES ($1, $2)
+      RETURNING id;
+    `;
+    const { rows: orderRows } = await pool.query(orderInsertQuery, [
+      user_id,
+      description || null,
+    ]);
+    const order_id = orderRows[0].id;
+
+    // Add order_id to each ticket row
+    const ticketValues = validTickets.map((row) => [...row, order_id]);
+
+    // Insert tickets with order_id
+    const insertQuery = `
+      INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price, order_id)
+      SELECT * FROM UNNEST(
+        $1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[], $6::int[]
+      )
+      RETURNING *;
+    `;
+
+    const result = await pool.query(insertQuery, [
+      ticketValues.map((row) => row[0]),
+      ticketValues.map((row) => row[1]),
+      ticketValues.map((row) => row[2]),
+      ticketValues.map((row) => row[3]),
+      ticketValues.map((row) => row[4]),
+      ticketValues.map((row) => row[5]),
     ]);
 
     res.json({
       message: "Tickets sold successfully",
+      order_id,
       soldTickets: result.rows,
     });
   } catch (error) {
@@ -137,6 +159,7 @@ export const sellTickets = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
 export const getTicketsByDate = async (req, res) => {
   try {
     const { date } = req.query;
@@ -376,12 +399,10 @@ export const markTicketAsSold = async (req, res) => {
       .map((ticket) => ticket.id);
 
     if (validIdsToSell.length === 0) {
-      return res
-        .status(400)
-        .json({
-          message:
-            "No valid tickets available for selling (all tickets already sold or invalid).",
-        });
+      return res.status(400).json({
+        message:
+          "No valid tickets available for selling (all tickets already sold or invalid).",
+      });
     }
 
     // Mark valid tickets as sold
