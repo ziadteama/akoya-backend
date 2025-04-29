@@ -13,7 +13,7 @@ export const loginUser = async (req, res) => {
     }
 
     // Fetch user details from the database
-    const query = `SELECT id, username, password_hash, role FROM users WHERE username = $1`;
+    const query = `SELECT id, name, username, password_hash, role FROM users WHERE username = $1`;
     const result = await pool.query(query, [username]);
 
     if (result.rows.length === 0) {
@@ -30,8 +30,14 @@ export const loginUser = async (req, res) => {
     }
 
     // If credentials are valid, return the user role
-    res.json({ message: "Login successful", role: user.role });
-  } catch (error) {
+    res.json({
+      message: "Login successful",
+      role: user.role,
+      name: user.name,
+      user_id: user.user_id,
+      id: user.id
+    });
+      } catch (error) {
     console.error("Error logging in:", error);
     res.status(500).json({ message: "Internal server error" });
   }
