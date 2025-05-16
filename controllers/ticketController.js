@@ -77,16 +77,17 @@ export const getAllTicketTypes = async (req, res) => {
 
 export const sellTickets = async (req, res) => {
   try {
-    const { tickets, user_id, description } = req.body;
+    const { tickets, user_id, description, payments } = req.body;
 
     if (!user_id || !Array.isArray(tickets) || tickets.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Missing user ID or ticket list" });
+      return res.status(400).json({ message: "Missing user ID or ticket list" });
     }
 
-    // Get ticket prices
-    const ticketTypeIds = tickets.map((ticket) => ticket.ticket_type_id);
+    if (!Array.isArray(payments) || payments.length === 0) {
+      return res.status(400).json({ message: "Missing payments" });
+    }
+
+    const ticketTypeIds = tickets.map((t) => t.ticket_type_id);
     const priceQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
     const { rows: priceRows } = await pool.query(priceQuery, [ticketTypeIds]);
 
@@ -96,12 +97,8 @@ export const sellTickets = async (req, res) => {
 
     const priceMap = new Map(priceRows.map((row) => [row.id, row.price]));
 
-    // Filter and expand tickets by quantity
     const validTickets = tickets
-      .filter(
-        ({ ticket_type_id, quantity }) =>
-          priceMap.has(ticket_type_id) && quantity > 0
-      )
+      .filter(({ ticket_type_id, quantity }) => priceMap.has(ticket_type_id) && quantity > 0)
       .flatMap(({ ticket_type_id, quantity }) =>
         Array(quantity).fill([
           ticket_type_id,
@@ -116,22 +113,43 @@ export const sellTickets = async (req, res) => {
       return res.status(400).json({ message: "No valid tickets to sell" });
     }
 
-    // Create new order
+    // Utility: round to 2 decimals
+    const round = (num) => Math.round(num * 100) / 100;
+
+    // Calculate total amount from ticket prices
+    const totalAmount = round(validTickets.reduce((sum, row) => sum + Number(row[4]), 0));
+
+    // Validate payments
+    const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
+    const hasPostponed = payments.some((p) => p.method === "postponed");
+
+    if (hasPostponed && payments.length > 1) {
+      return res.status(400).json({ message: "'Postponed' must be the only payment method" });
+    }
+
+    if (totalPaid !== totalAmount) {
+      return res.status(400).json({
+        message: `Total payments (${totalPaid}) must equal ticket total (${totalAmount})`
+      });
+    }
+
+    // Create order with total_amount
     const orderInsertQuery = `
-      INSERT INTO orders (user_id, description)
-      VALUES ($1, $2)
+      INSERT INTO orders (user_id, description, total_amount)
+      VALUES ($1, $2, $3)
       RETURNING id;
     `;
     const { rows: orderRows } = await pool.query(orderInsertQuery, [
       user_id,
       description || null,
+      totalAmount,
     ]);
     const order_id = orderRows[0].id;
 
-    // Add order_id to each ticket row
+    // Add order_id to tickets
     const ticketValues = validTickets.map((row) => [...row, order_id]);
 
-    // Insert tickets with order_id
+    // Insert tickets
     const insertQuery = `
       INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price, order_id)
       SELECT * FROM UNNEST(
@@ -139,7 +157,6 @@ export const sellTickets = async (req, res) => {
       )
       RETURNING *;
     `;
-
     const result = await pool.query(insertQuery, [
       ticketValues.map((row) => row[0]),
       ticketValues.map((row) => row[1]),
@@ -149,8 +166,20 @@ export const sellTickets = async (req, res) => {
       ticketValues.map((row) => row[5]),
     ]);
 
+    // Insert payments
+    const paymentInsertQuery = `
+      INSERT INTO payments (order_id, method, amount)
+      SELECT * FROM UNNEST($1::int[], $2::payment_method[], $3::numeric[])
+      RETURNING *;
+    `;
+    await pool.query(paymentInsertQuery, [
+      payments.map(() => order_id),
+      payments.map((p) => p.method),
+      payments.map((p) => p.amount),
+    ]);
+
     res.json({
-      message: "Tickets sold successfully",
+      message: "Tickets sold and payments recorded",
       order_id,
       soldTickets: result.rows,
     });
