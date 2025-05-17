@@ -109,10 +109,24 @@ export const updateMeals = async (req, res) => {
 // Optional: get all meals
 export const getAllMeals = async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM meals ORDER BY id");
+    const { archived } = req.query;
+
+    let query = `SELECT * FROM meals`;
+    const values = [];
+
+    if (archived === "true") {
+      query += ` WHERE archived = TRUE`;
+    } else if (archived === "false") {
+      query += ` WHERE archived = FALSE`;
+    }
+
+    query += ` ORDER BY id`;
+
+    const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (error) {
     console.error("Error fetching meals:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
