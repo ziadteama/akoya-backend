@@ -77,7 +77,7 @@ export const getAllTicketTypes = async (req, res) => {
 
 export const sellTickets = async (req, res) => {
   try {
-    const { tickets, user_id, description, payments } = req.body;
+    const { tickets, user_id, description, payments, meals = [] } = req.body;
 
     if (!user_id || !Array.isArray(tickets) || tickets.length === 0) {
       return res.status(400).json({ message: "Missing user ID or ticket list" });
@@ -87,25 +87,23 @@ export const sellTickets = async (req, res) => {
       return res.status(400).json({ message: "Missing payments" });
     }
 
+    const round = (num) => Math.round(num * 100) / 100;
+
+    // 🎟 Get ticket prices
     const ticketTypeIds = tickets.map((t) => t.ticket_type_id);
-    const priceQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
-    const { rows: priceRows } = await pool.query(priceQuery, [ticketTypeIds]);
-
-    if (priceRows.length === 0) {
-      return res.status(404).json({ message: "No valid ticket types found" });
-    }
-
-    const priceMap = new Map(priceRows.map((row) => [row.id, row.price]));
+    const ticketQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
+    const { rows: ticketRows } = await pool.query(ticketQuery, [ticketTypeIds]);
+    const ticketPriceMap = new Map(ticketRows.map((row) => [row.id, row.price]));
 
     const validTickets = tickets
-      .filter(({ ticket_type_id, quantity }) => priceMap.has(ticket_type_id) && quantity > 0)
+      .filter(({ ticket_type_id, quantity }) => ticketPriceMap.has(ticket_type_id) && quantity > 0)
       .flatMap(({ ticket_type_id, quantity }) =>
         Array(quantity).fill([
           ticket_type_id,
           "sold",
           true,
           new Date(),
-          priceMap.get(ticket_type_id),
+          ticketPriceMap.get(ticket_type_id),
         ])
       );
 
@@ -113,13 +111,29 @@ export const sellTickets = async (req, res) => {
       return res.status(400).json({ message: "No valid tickets to sell" });
     }
 
-    // Utility: round to 2 decimals
-    const round = (num) => Math.round(num * 100) / 100;
+    // 🍽️ Get meal prices (if any)
+    let validMeals = [];
+    if (meals.length > 0) {
+      const mealIds = meals.map((m) => m.meal_id);
+      const mealQuery = `SELECT id, price FROM meals WHERE id = ANY($1)`;
+      const { rows: mealRows } = await pool.query(mealQuery, [mealIds]);
+      const mealPriceMap = new Map(mealRows.map((row) => [row.id, row.price]));
 
-    // Calculate total amount from ticket prices
-    const totalAmount = round(validTickets.reduce((sum, row) => sum + Number(row[4]), 0));
+      validMeals = meals
+        .filter(({ meal_id, quantity }) => mealPriceMap.has(meal_id) && quantity > 0)
+        .map(({ meal_id, quantity }) => ({
+          meal_id,
+          quantity,
+          price: mealPriceMap.get(meal_id),
+        }));
+    }
 
-    // Validate payments
+    // 🧮 Calculate total
+    const ticketTotal = round(validTickets.reduce((sum, row) => sum + Number(row[4]), 0));
+    const mealTotal = round(validMeals.reduce((sum, m) => sum + m.quantity * m.price, 0));
+    const totalAmount = round(ticketTotal + mealTotal);
+
+    // 💳 Validate payments
     const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
     const hasPostponed = payments.some((p) => p.method === "postponed");
 
@@ -129,11 +143,11 @@ export const sellTickets = async (req, res) => {
 
     if (totalPaid !== totalAmount) {
       return res.status(400).json({
-        message: `Total payments (${totalPaid}) must equal ticket total (${totalAmount})`
+        message: `Total payments (${totalPaid}) must equal total ticket + meal cost (${totalAmount})`,
       });
     }
 
-    // Create order with total_amount
+    // 🧾 Insert order
     const orderInsertQuery = `
       INSERT INTO orders (user_id, description, total_amount)
       VALUES ($1, $2, $3)
@@ -144,20 +158,18 @@ export const sellTickets = async (req, res) => {
       description || null,
       totalAmount,
     ]);
-    const order_id = orderRows[0].id;
+    const order_id = orderRows[0].id; 
 
-    // Add order_id to tickets
+    // 🎟 Insert tickets
     const ticketValues = validTickets.map((row) => [...row, order_id]);
-
-    // Insert tickets
-    const insertQuery = `
+    const ticketInsertQuery = `
       INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price, order_id)
       SELECT * FROM UNNEST(
         $1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[], $6::int[]
       )
       RETURNING *;
     `;
-    const result = await pool.query(insertQuery, [
+    const ticketResult = await pool.query(ticketInsertQuery, [
       ticketValues.map((row) => row[0]),
       ticketValues.map((row) => row[1]),
       ticketValues.map((row) => row[2]),
@@ -166,11 +178,24 @@ export const sellTickets = async (req, res) => {
       ticketValues.map((row) => row[5]),
     ]);
 
-    // Insert payments
+    // 🍽️ Insert meals
+    if (validMeals.length > 0) {
+      const mealInsertQuery = `
+        INSERT INTO order_meals (order_id, meal_id, quantity, price_at_order)
+        SELECT * FROM UNNEST($1::int[], $2::int[], $3::int[], $4::numeric[])
+      `;
+      await pool.query(mealInsertQuery, [
+        validMeals.map(() => order_id),
+        validMeals.map((m) => m.meal_id),
+        validMeals.map((m) => m.quantity),
+        validMeals.map((m) => m.price),
+      ]);
+    }
+
+    // 💵 Insert payments
     const paymentInsertQuery = `
       INSERT INTO payments (order_id, method, amount)
       SELECT * FROM UNNEST($1::int[], $2::payment_method[], $3::numeric[])
-      RETURNING *;
     `;
     await pool.query(paymentInsertQuery, [
       payments.map(() => order_id),
@@ -179,15 +204,17 @@ export const sellTickets = async (req, res) => {
     ]);
 
     res.json({
-      message: "Tickets sold and payments recorded",
+      message: "Tickets and meals sold successfully",
       order_id,
-      soldTickets: result.rows,
+      soldTickets: ticketResult.rows,
+      soldMeals: validMeals,
     });
   } catch (error) {
-    console.error("Error selling tickets:", error);
+    console.error("Error selling tickets and meals:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 export const getTicketsByDate = async (req, res) => {
   try {
