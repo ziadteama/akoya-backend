@@ -40,7 +40,13 @@ export const getOrdersByDate = async (req, res) => {
             'quantity', om.quantity,
             'price_at_order', om.price_at_order
           )
-        ) FILTER (WHERE om.id IS NOT NULL) AS meals
+        ) FILTER (WHERE om.id IS NOT NULL) AS meals,
+
+        (
+          SELECT json_agg(jsonb_build_object('method', p.method, 'amount', p.amount))
+          FROM payments p
+          WHERE p.order_id = o.id
+        ) AS payments
 
       FROM orders o
       JOIN users u ON o.user_id = u.id
@@ -100,7 +106,13 @@ export const getOrdersBetweenDates = async (req, res) => {
             'quantity', om.quantity,
             'price_at_order', om.price_at_order
           )
-        ) FILTER (WHERE om.id IS NOT NULL) AS meals
+        ) FILTER (WHERE om.id IS NOT NULL) AS meals,
+
+        (
+          SELECT json_agg(jsonb_build_object('method', p.method, 'amount', p.amount))
+          FROM payments p
+          WHERE p.order_id = o.id
+        ) AS payments
 
       FROM orders o
       JOIN users u ON o.user_id = u.id
@@ -118,3 +130,4 @@ export const getOrdersBetweenDates = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
+
