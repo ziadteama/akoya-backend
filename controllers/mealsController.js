@@ -106,6 +106,40 @@ export const updateMeals = async (req, res) => {
   }
 };
 
+export const updateMealArchiveStatus = async (req, res) => {
+  try {
+    const { name, archived } = req.body;
+
+    if (!name || typeof archived !== "boolean") {
+      return res.status(400).json({
+        message: "Both 'name' and boolean 'archived' status are required.",
+      });
+    }
+
+    const query = `
+      UPDATE meals
+      SET archived = $1
+      WHERE name = $2
+      RETURNING *;
+    `;
+
+    const { rows } = await pool.query(query, [archived, name]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Meal not found." });
+    }
+
+    res.json({
+      message: `Meal '${name}' archive status updated successfully.`,
+      updatedMeal: rows[0],
+    });
+  } catch (error) {
+    console.error("Error updating archive status:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
 // Optional: get all meals
 export const getAllMeals = async (req, res) => {
   try {
