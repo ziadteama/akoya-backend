@@ -1,6 +1,5 @@
 import pool from "../db.js";
 
-
 export const getOrdersByDate = async (req, res) => {
   const { date } = req.query;
 
@@ -17,14 +16,23 @@ export const getOrdersByDate = async (req, res) => {
         o.created_at,
         o.total_amount,
         o.description,
-        json_agg(
-          DISTINCT jsonb_build_object(
-            'ticket_type_id', tt.id,
-            'category', tt.category,
-            'subcategory', tt.subcategory,
-            'sold_price', t.sold_price
-          )
-        ) FILTER (WHERE t.id IS NOT NULL) AS tickets,
+
+        (
+          SELECT json_agg(ticket_summary)
+          FROM (
+            SELECT 
+              tt.id AS ticket_type_id,
+              tt.category,
+              tt.subcategory,
+              t.sold_price,
+              COUNT(*) AS quantity
+            FROM tickets t
+            JOIN ticket_types tt ON t.ticket_type_id = tt.id
+            WHERE t.order_id = o.id
+            GROUP BY tt.id, tt.category, tt.subcategory, t.sold_price
+          ) AS ticket_summary
+        ) AS tickets,
+
         json_agg(
           DISTINCT jsonb_build_object(
             'meal_id', m.id,
@@ -33,10 +41,9 @@ export const getOrdersByDate = async (req, res) => {
             'price_at_order', om.price_at_order
           )
         ) FILTER (WHERE om.id IS NOT NULL) AS meals
+
       FROM orders o
       JOIN users u ON o.user_id = u.id
-      LEFT JOIN tickets t ON o.id = t.order_id
-      LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
       LEFT JOIN order_meals om ON o.id = om.order_id
       LEFT JOIN meals m ON om.meal_id = m.id
       WHERE DATE(o.created_at) = $1
@@ -51,8 +58,6 @@ export const getOrdersByDate = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
-
-
 
 
 export const getOrdersBetweenDates = async (req, res) => {
@@ -71,14 +76,23 @@ export const getOrdersBetweenDates = async (req, res) => {
         o.created_at,
         o.total_amount,
         o.description,
-        json_agg(
-          DISTINCT jsonb_build_object(
-            'ticket_type_id', tt.id,
-            'category', tt.category,
-            'subcategory', tt.subcategory,
-            'sold_price', t.sold_price
-          )
-        ) FILTER (WHERE t.id IS NOT NULL) AS tickets,
+
+        (
+          SELECT json_agg(ticket_summary)
+          FROM (
+            SELECT 
+              tt.id AS ticket_type_id,
+              tt.category,
+              tt.subcategory,
+              t.sold_price,
+              COUNT(*) AS quantity
+            FROM tickets t
+            JOIN ticket_types tt ON t.ticket_type_id = tt.id
+            WHERE t.order_id = o.id
+            GROUP BY tt.id, tt.category, tt.subcategory, t.sold_price
+          ) AS ticket_summary
+        ) AS tickets,
+
         json_agg(
           DISTINCT jsonb_build_object(
             'meal_id', m.id,
@@ -87,10 +101,9 @@ export const getOrdersBetweenDates = async (req, res) => {
             'price_at_order', om.price_at_order
           )
         ) FILTER (WHERE om.id IS NOT NULL) AS meals
+
       FROM orders o
       JOIN users u ON o.user_id = u.id
-      LEFT JOIN tickets t ON o.id = t.order_id
-      LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
       LEFT JOIN order_meals om ON o.id = om.order_id
       LEFT JOIN meals m ON om.meal_id = m.id
       WHERE o.created_at BETWEEN $1 AND $2
@@ -105,4 +118,3 @@ export const getOrdersBetweenDates = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
-
