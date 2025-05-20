@@ -1,6 +1,7 @@
   import express from 'express';
   import ticketRoutes from './routes/ticketRoutes.js';
   import mealRoutes from './routes/mealRoutes.js';
+  import orderRoutes from "./routes/ordersRoutes.js";
   import dotenv from 'dotenv';
   import cors from 'cors';
 
@@ -21,6 +22,7 @@
   // Routes
   app.use('/api/tickets', ticketRoutes);
   app.use('/api/meals', mealRoutes);
+  app.use('/api/orders',orderRoutes);
 
 
   // Start the server
