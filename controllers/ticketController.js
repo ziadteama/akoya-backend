@@ -629,11 +629,12 @@ export const getTicketById = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
-                    tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description
-             FROM tickets t
-             JOIN ticket_types tt ON t.ticket_type_id = tt.id
-             WHERE t.id = $1`,
+      `SELECT 
+          t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
+          tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description
+       FROM tickets t
+       LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
+       WHERE t.id = $1`,
       [id]
     );
 
