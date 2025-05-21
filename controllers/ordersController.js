@@ -118,7 +118,7 @@ export const getOrdersBetweenDates = async (req, res) => {
       JOIN users u ON o.user_id = u.id
       LEFT JOIN order_meals om ON o.id = om.order_id
       LEFT JOIN meals m ON om.meal_id = m.id
-      WHERE o.created_at BETWEEN $1 AND $2
+      WHERE DATE(o.created_at) BETWEEN $1::date AND $2::date
       GROUP BY o.id, u.name
       ORDER BY o.created_at DESC;
     `;
