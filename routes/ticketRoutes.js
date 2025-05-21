@@ -5,7 +5,7 @@ import {
   addTicketTypes,
   updateTicketPrices,
   generateTickets,
-  markTicketAsSold,
+  checkoutExistingTickets,
   updateTicketValidation,
   getTicketById,
   refundTickets,
@@ -13,7 +13,8 @@ import {
   getAllTicketTypes,
   getTicketsBetweenDates,
   getTicketsByDate,
-  updateTicketTypeArchiveStatus
+  updateTicketTypeArchiveStatus,
+  assignTicketTypesById
 } from "../controllers/ticketController.js";
 
 const router = express.Router();
@@ -73,7 +74,7 @@ router.patch("/update-price", updateTicketPrices);
  * @desc Mark a ticket as sold
  * @access Public
  */
-router.put("/mark-sold", markTicketAsSold);
+router.put("/checkout-existing", checkoutExistingTickets);
 
 /**
  * @route PUT /validate
@@ -90,6 +91,8 @@ router.put("/validate", updateTicketValidation);
 router.put("/refund", refundTickets);
 
 router.patch("/archive-category", updateTicketTypeArchiveStatus);
+
+router.patch("/tickets/assign-types", assignTicketTypesById);
 
 
 export default router;

@@ -219,9 +219,7 @@ export const sellTickets = async (req, res) => {
   }
 };
 
-
-
-export const getTicketsByDate = async (req, res) => {
+  export const getTicketsByDate = async (req, res) => {
   try {
     const { date } = req.query;
 
@@ -283,7 +281,7 @@ export const getTicketsBetweenDates = async (req, res) => {
       JOIN ticket_types tt ON t.ticket_type_id = tt.id
       WHERE t.valid = TRUE 
       AND t.status = 'sold' 
-      AND t.sold_at BETWEEN $1 AND $2
+      AND DATE(t.sold_at) BETWEEN $1::date AND $2::date
       GROUP BY tt.category, tt.subcategory;
     `;
 
@@ -295,6 +293,7 @@ export const getTicketsBetweenDates = async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 };
+
 
 export const addTicketTypes = async (req, res) => {
   try {
@@ -435,54 +434,132 @@ export const generateTickets = async (req, res) => {
   }
 };
 
-export const markTicketAsSold = async (req, res) => {
+export const checkoutExistingTickets = async (req, res) => {
   try {
-    const { ids } = req.body;
+    const { ticket_ids, user_id, description, payments, meals = [] } = req.body;
 
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Please provide an array of ticket IDs." });
+    if (!user_id || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      return res.status(400).json({ message: "Missing user ID or ticket IDs" });
     }
 
-    // Check current ticket statuses
-    const checkQuery = `
-      SELECT id, status, valid FROM tickets WHERE id = ANY($1)
+    if (!Array.isArray(payments) || payments.length === 0) {
+      return res.status(400).json({ message: "Missing payments" });
+    }
+
+    const round = (num) => Math.round(num * 100) / 100;
+
+    // ✅ Fetch ticket info
+    const ticketQuery = `
+      SELECT t.id, t.sold_price, t.status, t.valid, tt.price, t.ticket_type_id
+      FROM tickets t
+      JOIN ticket_types tt ON t.ticket_type_id = tt.id
+      WHERE t.id = ANY($1)
     `;
-    const checkResult = await pool.query(checkQuery, [ids]);
+    const { rows: ticketRows } = await pool.query(ticketQuery, [ticket_ids]);
 
-    if (checkResult.rows.length === 0) {
-      return res.status(404).json({ message: "No matching tickets found." });
+    const validTickets = ticketRows.filter(t => t.valid && t.status !== 'sold');
+
+    if (validTickets.length !== ticket_ids.length) {
+      return res.status(400).json({ message: "Some tickets are already sold or invalid" });
     }
 
-    const validIdsToSell = checkResult.rows
-      .filter((ticket) => ticket.status !== "sold" && ticket.valid)
-      .map((ticket) => ticket.id);
+    const ticketTotal = round(validTickets.reduce((sum, t) => sum + Number(t.price), 0));
 
-    if (validIdsToSell.length === 0) {
+    // ✅ Fetch meal prices
+    let validMeals = [];
+    if (meals.length > 0) {
+      const mealIds = meals.map((m) => m.meal_id);
+      const mealQuery = `SELECT id, price FROM meals WHERE id = ANY($1)`;
+      const { rows: mealRows } = await pool.query(mealQuery, [mealIds]);
+      const mealPriceMap = new Map(mealRows.map((row) => [row.id, parseFloat(row.price)]));
+
+      validMeals = meals
+        .filter(({ meal_id, quantity }) => mealPriceMap.has(meal_id) && quantity > 0)
+        .map(({ meal_id, quantity }) => ({
+          meal_id,
+          quantity,
+          price: mealPriceMap.get(meal_id),
+        }));
+    }
+
+    const mealTotal = round(validMeals.reduce((sum, m) => sum + m.quantity * m.price, 0));
+    const totalAmount = round(ticketTotal + mealTotal);
+
+    // ✅ Validate payments
+    const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
+    const hasPostponed = payments.some((p) => p.method === "postponed");
+
+    if (hasPostponed && payments.length > 1) {
+      return res.status(400).json({ message: "'Postponed' must be the only payment method" });
+    }
+
+    if (totalPaid !== totalAmount) {
       return res.status(400).json({
-        message:
-          "No valid tickets available for selling (all tickets already sold or invalid).",
+        message: `Total payments (${totalPaid}) must equal total ticket + meal cost (${totalAmount})`,
       });
     }
 
-    // Mark valid tickets as sold
-    const updateQuery = `
-      UPDATE tickets
-      SET status = 'sold', sold_at = NOW()
-      WHERE id = ANY($1)
-      RETURNING *;
+    // ✅ Insert order
+    const orderInsertQuery = `
+      INSERT INTO orders (user_id, description, total_amount)
+      VALUES ($1, $2, $3)
+      RETURNING id;
     `;
+    const { rows: orderRows } = await pool.query(orderInsertQuery, [
+      user_id,
+      description || null,
+      totalAmount,
+    ]);
+    const order_id = orderRows[0].id;
 
-    const updateResult = await pool.query(updateQuery, [validIdsToSell]);
+    // ✅ Update existing tickets
+    const updateTicketsQuery = `
+      UPDATE tickets
+      SET status = 'sold',
+          sold_at = NOW(),
+          sold_price = tt.price,
+          order_id = $2
+      FROM ticket_types tt
+      WHERE tickets.id = ANY($1)
+        AND tickets.ticket_type_id = tt.id
+      RETURNING tickets.*;
+    `;
+    const ticketResult = await pool.query(updateTicketsQuery, [ticket_ids, order_id]);
+
+    // ✅ Insert meals
+    if (validMeals.length > 0) {
+      const mealInsertQuery = `
+        INSERT INTO order_meals (order_id, meal_id, quantity, price_at_order)
+        SELECT * FROM UNNEST($1::int[], $2::int[], $3::int[], $4::numeric[])
+      `;
+      await pool.query(mealInsertQuery, [
+        validMeals.map(() => order_id),
+        validMeals.map((m) => m.meal_id),
+        validMeals.map((m) => m.quantity),
+        validMeals.map((m) => m.price),
+      ]);
+    }
+
+    // ✅ Insert payments
+    const paymentInsertQuery = `
+      INSERT INTO payments (order_id, method, amount)
+      SELECT * FROM UNNEST($1::int[], $2::payment_method[], $3::numeric[])
+    `;
+    await pool.query(paymentInsertQuery, [
+      payments.map(() => order_id),
+      payments.map((p) => p.method),
+      payments.map((p) => p.amount),
+    ]);
 
     res.json({
-      message: `${updateResult.rowCount} ticket(s) marked as sold.`,
-      soldTickets: updateResult.rows,
-      skippedTickets: ids.filter((id) => !validIdsToSell.includes(id)),
+      message: "Existing tickets checked out successfully",
+      order_id,
+      totalAmount,
+      soldTickets: ticketResult.rows,
+      soldMeals: validMeals,
     });
   } catch (error) {
-    console.error("Error marking tickets as sold:", error);
+    console.error("❌ Error checking out existing tickets:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -635,3 +712,57 @@ export const updateTicketTypeArchiveStatus = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+export const assignTicketTypesById = async (req, res) => {
+  const { assignments } = req.body;
+
+  // Validate input
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return res.status(400).json({ message: "Provide a list of ticket assignments" });
+  }
+
+  // Validate each assignment
+  for (const entry of assignments) {
+    if (
+      !entry.id ||
+      !entry.ticket_type_id ||
+      typeof entry.id !== "number" ||
+      typeof entry.ticket_type_id !== "number"
+    ) {
+      return res.status(400).json({
+        message: `Invalid assignment entry: ${JSON.stringify(entry)}`
+      });
+    }
+  }
+
+  try {
+    const ids = assignments.map(a => a.id);
+    const typeIds = assignments.map(a => a.ticket_type_id);
+
+    const query = `
+      UPDATE tickets AS t
+      SET ticket_type_id = a.ticket_type_id
+      FROM (
+        SELECT UNNEST($1::int[]) AS id,
+               UNNEST($2::int[]) AS ticket_type_id
+      ) AS a
+      WHERE t.id = a.id
+      RETURNING *;
+    `;
+
+    const { rows } = await pool.query(query, [ids, typeIds]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "No tickets updated" });
+    }
+
+    res.json({
+      message: "Ticket types assigned successfully",
+      updated: rows
+    });
+  } catch (error) {
+    console.error("Error assigning ticket types:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
