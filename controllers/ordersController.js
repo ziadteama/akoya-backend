@@ -212,7 +212,7 @@ export const updateOrder = async (req, res) => {
           // Remove each ticket
           for (const ticketRow of ticketsToRemove.rows) {
             await client.query(
-              'UPDATE tickets SET status = \'refunded\', order_id = NULL WHERE id = $1',
+              'DELETE FROM tickets WHERE id = $1',
               [ticketRow.id]
             );
             
