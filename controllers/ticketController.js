@@ -148,10 +148,7 @@ export const sellTickets = async (req, res) => {
     // 💳 Validate payments
     const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
     const hasPostponed = payments.some((p) => p.method === "postponed");
-
-    if (hasPostponed && payments.length > 1) {
-      return res.status(400).json({ message: "'Postponed' must be the only payment method" });
-    }
+    // ✅ Postponed is now allowed with other methods
 
     if (totalPaid !== totalAmount) {
       return res.status(400).json({
