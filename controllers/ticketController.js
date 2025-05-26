@@ -96,6 +96,7 @@ export const sellTickets = async (req, res) => {
       return res.status(400).json({ message: "No valid tickets or meals to sell" });
     }
 
+    // First calculation of discount amount - keep this one
     const grossTotal = round(ticketTotal + mealTotal);
     const discountAmount = round(
       payments.find((p) => p.method === "discount")?.amount || 0
@@ -115,16 +116,15 @@ export const sellTickets = async (req, res) => {
       });
     }
 
-    // 🧾 Insert order
+    // 🧾 Insert order with default total (will be updated by trigger)
     const orderInsertQuery = `
-      INSERT INTO orders (user_id, description, total_amount)
-      VALUES ($1, $2, $3)
+      INSERT INTO orders (user_id, description)
+      VALUES ($1, $2)
       RETURNING id;
     `;
     const { rows: orderRows } = await pool.query(orderInsertQuery, [
       user_id,
       description || null,
-      finalTotal,
     ]);
     const order_id = orderRows[0].id;
 
@@ -172,13 +172,29 @@ export const sellTickets = async (req, res) => {
       payments.map((p) => p.amount),
     ]);
 
+    // Get the updated order with correctly calculated totals
+    const orderQuery = `
+      SELECT id, total_amount, gross_total
+      FROM orders
+      WHERE id = $1;
+    `;
+    const { rows: updatedOrder } = await pool.query(orderQuery, [order_id]);
+    
+    // CHANGE THIS LINE - Use a different variable name
+    // Instead of:
+    // const discountAmount = payments...
+    
+    // Use this:
+    const reportedDiscountAmount = payments
+      .filter(p => p.method === "discount")
+      .reduce((sum, p) => sum + Number(p.amount), 0);
+
     res.json({
       message: "Checkout completed with discount support",
       order_id,
-      grossTotal,
-      discountAmount,
-      finalTotal,
-      paidAmount,
+      grossTotal: updatedOrder[0].gross_total,
+      discountAmount: reportedDiscountAmount, // Use the new variable name
+      finalTotal: updatedOrder[0].total_amount,
     });
   } catch (err) {
     console.error("❌ sellTickets error:", err);
