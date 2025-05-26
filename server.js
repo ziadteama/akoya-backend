@@ -1,31 +1,33 @@
-  import express from 'express';
-  import ticketRoutes from './routes/ticketRoutes.js';
-  import mealRoutes from './routes/mealRoutes.js';
-  import orderRoutes from "./routes/ordersRoutes.js";
-  import dotenv from 'dotenv';
-  import cors from 'cors';
+import express from 'express';
+import ticketRoutes from './routes/ticketRoutes.js';
+import mealRoutes from './routes/mealRoutes.js';
+import orderRoutes from "./routes/ordersRoutes.js";
+import userRoutes from './routes/userRoutes.js';
+import dotenv from 'dotenv';
+import cors from 'cors';
 
 
 
-  dotenv.config();
+dotenv.config();
 
-  const app = express();
-  const PORT = process.env.PORT || 3000;
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-  // Middleware
-  app.use(cors({
-      origin: "http://localhost:5173", 
-      credentials: true, 
-    }));
-  app.use(express.json());
+// Middleware
+app.use(cors({
+    origin: "http://localhost:5173", 
+    credentials: true, 
+  }));
+app.use(express.json());
 
-  // Routes
-  app.use('/api/tickets', ticketRoutes);
-  app.use('/api/meals', mealRoutes);
-  app.use('/api/orders',orderRoutes);
+// Routes
+app.use('/api/tickets', ticketRoutes);
+app.use('/api/meals', mealRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/users', userRoutes);
 
 
-  // Start the server
-  app.listen(PORT, () => {
-      console.log(`Server is running on http://localhost:${PORT}`);
-  });
+// Start the server
+app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+});

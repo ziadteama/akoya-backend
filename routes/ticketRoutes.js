@@ -9,7 +9,6 @@ import {
   updateTicketValidation,
   getTicketById,
   refundTickets,
-  loginUser,
   getAllTicketTypes,
   getTicketsBetweenDates,
   getTicketsByDate,
@@ -19,7 +18,6 @@ import {
 
 const router = express.Router();
 
-router.post("/login", loginUser);
 
 /**
  * @route GET /
