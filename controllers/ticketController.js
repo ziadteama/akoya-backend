@@ -78,10 +78,10 @@ export const getAllTicketTypes = async (req, res) => {
 
 export const sellTickets = async (req, res) => {
   try {
-    const { tickets, user_id, description, payments, meals = [] } = req.body;
+    const { tickets = [], user_id, description, payments, meals = [] } = req.body;
 
-    if (!user_id || !Array.isArray(tickets) || tickets.length === 0) {
-      return res.status(400).json({ message: "Missing user ID or ticket list" });
+    if (!user_id) {
+      return res.status(400).json({ message: "Missing user ID" });
     }
 
     if (!Array.isArray(payments) || payments.length === 0) {
@@ -90,32 +90,37 @@ export const sellTickets = async (req, res) => {
 
     const round = (num) => Math.round(num * 100) / 100;
 
-    // 🎟 Fetch ticket prices
-    const ticketTypeIds = tickets.map((t) => t.ticket_type_id);
-    const ticketQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
-    const { rows: ticketRows } = await pool.query(ticketQuery, [ticketTypeIds]);
-    const ticketPriceMap = new Map(ticketRows.map((row) => [row.id, parseFloat(row.price)]));
-    console.log("🎟 Ticket Prices from DB:", ticketPriceMap);
+    // 🎟 Fetch ticket prices if any
+    let validTickets = [];
+    let ticketTotal = 0;
 
-    const validTickets = tickets
-      .filter(({ ticket_type_id, quantity }) => ticketPriceMap.has(ticket_type_id) && quantity > 0)
-      .flatMap(({ ticket_type_id, quantity }) =>
-        Array(quantity).fill([
-          ticket_type_id,
-          "sold",
-          true,
-          new Date(),
-          ticketPriceMap.get(ticket_type_id),
-        ])
-      );
+    if (Array.isArray(tickets) && tickets.length > 0) {
+      const ticketTypeIds = tickets.map((t) => t.ticket_type_id);
+      const ticketQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
+      const { rows: ticketRows } = await pool.query(ticketQuery, [ticketTypeIds]);
+      const ticketPriceMap = new Map(ticketRows.map((row) => [row.id, parseFloat(row.price)]));
+      console.log("🎟 Ticket Prices from DB:", ticketPriceMap);
 
-    if (validTickets.length === 0) {
-      return res.status(400).json({ message: "No valid tickets to sell" });
+      validTickets = tickets
+        .filter(({ ticket_type_id, quantity }) => ticketPriceMap.has(ticket_type_id) && quantity > 0)
+        .flatMap(({ ticket_type_id, quantity }) =>
+          Array(quantity).fill([
+            ticket_type_id,
+            "sold",
+            true,
+            new Date(),
+            ticketPriceMap.get(ticket_type_id),
+          ])
+        );
+
+      ticketTotal = round(validTickets.reduce((sum, row) => sum + Number(row[4]), 0));
     }
 
     // 🍽️ Fetch meal prices if any
     let validMeals = [];
-    if (meals.length > 0) {
+    let mealTotal = 0;
+
+    if (Array.isArray(meals) && meals.length > 0) {
       const mealIds = meals.map((m) => m.meal_id);
       const mealQuery = `SELECT id, price FROM meals WHERE id = ANY($1)`;
       const { rows: mealRows } = await pool.query(mealQuery, [mealIds]);
@@ -129,13 +134,16 @@ export const sellTickets = async (req, res) => {
           quantity,
           price: mealPriceMap.get(meal_id),
         }));
+
+      mealTotal = round(validMeals.reduce((sum, m) => sum + m.quantity * m.price, 0));
     }
 
-    // 🧮 Calculate totals
-    const ticketTotal = round(validTickets.reduce((sum, row) => sum + Number(row[4]), 0));
-    const mealTotal = round(validMeals.reduce((sum, m) => sum + m.quantity * m.price, 0));
-    const totalAmount = round(ticketTotal + mealTotal);
+    if (validTickets.length === 0 && validMeals.length === 0) {
+      return res.status(400).json({ message: "No valid tickets or meals to sell" });
+    }
 
+    // 🧮 Calculate total
+    const totalAmount = round(ticketTotal + mealTotal);
 
     // 💳 Validate payments
     const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
@@ -147,7 +155,7 @@ export const sellTickets = async (req, res) => {
 
     if (totalPaid !== totalAmount) {
       return res.status(400).json({
-        message: `Total payments (${totalPaid}) must equal total ticket + meal cost (${totalAmount})`,
+        message: `Total payments (${totalPaid}) must equal total cost (${totalAmount})`,
       });
     }
 
@@ -163,25 +171,28 @@ export const sellTickets = async (req, res) => {
       totalAmount,
     ]);
     const order_id = orderRows[0].id;
-    // 🎟 Insert tickets
-    const ticketValues = validTickets.map((row) => [...row, order_id]);
-    const ticketInsertQuery = `
-      INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price, order_id)
-      SELECT * FROM UNNEST(
-        $1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[], $6::int[]
-      )
-      RETURNING *;
-    `;
-    const ticketResult = await pool.query(ticketInsertQuery, [
-      ticketValues.map((row) => row[0]),
-      ticketValues.map((row) => row[1]),
-      ticketValues.map((row) => row[2]),
-      ticketValues.map((row) => row[3]),
-      ticketValues.map((row) => row[4]),
-      ticketValues.map((row) => row[5]),
-    ]);
 
-    // 🍽️ Insert meals
+    // 🎟 Insert tickets if any
+    if (validTickets.length > 0) {
+      const ticketValues = validTickets.map((row) => [...row, order_id]);
+      const ticketInsertQuery = `
+        INSERT INTO tickets (ticket_type_id, status, valid, sold_at, sold_price, order_id)
+        SELECT * FROM UNNEST(
+          $1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[], $6::int[]
+        )
+        RETURNING *;
+      `;
+      await pool.query(ticketInsertQuery, [
+        ticketValues.map((row) => row[0]),
+        ticketValues.map((row) => row[1]),
+        ticketValues.map((row) => row[2]),
+        ticketValues.map((row) => row[3]),
+        ticketValues.map((row) => row[4]),
+        ticketValues.map((row) => row[5]),
+      ]);
+    }
+
+    // 🍽️ Insert meals if any
     if (validMeals.length > 0) {
       const mealInsertQuery = `
         INSERT INTO order_meals (order_id, meal_id, quantity, price_at_order)
@@ -207,10 +218,10 @@ export const sellTickets = async (req, res) => {
     ]);
 
     res.json({
-      message: "Tickets and meals sold successfully",
+      message: "Tickets and/or meals sold successfully",
       order_id,
       totalAmount,
-      soldTickets: ticketResult.rows,
+      soldTickets: validTickets.length,
       soldMeals: validMeals,
     });
   } catch (error) {
