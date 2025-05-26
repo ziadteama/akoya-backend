@@ -90,16 +90,14 @@ export const sellTickets = async (req, res) => {
 
     const round = (num) => Math.round(num * 100) / 100;
 
-    // 🎟 Fetch ticket prices if any
+    // 🎟 Tickets
     let validTickets = [];
     let ticketTotal = 0;
-
     if (Array.isArray(tickets) && tickets.length > 0) {
       const ticketTypeIds = tickets.map((t) => t.ticket_type_id);
       const ticketQuery = `SELECT id, price FROM ticket_types WHERE id = ANY($1)`;
       const { rows: ticketRows } = await pool.query(ticketQuery, [ticketTypeIds]);
       const ticketPriceMap = new Map(ticketRows.map((row) => [row.id, parseFloat(row.price)]));
-      console.log("🎟 Ticket Prices from DB:", ticketPriceMap);
 
       validTickets = tickets
         .filter(({ ticket_type_id, quantity }) => ticketPriceMap.has(ticket_type_id) && quantity > 0)
@@ -116,16 +114,14 @@ export const sellTickets = async (req, res) => {
       ticketTotal = round(validTickets.reduce((sum, row) => sum + Number(row[4]), 0));
     }
 
-    // 🍽️ Fetch meal prices if any
+    // 🍽️ Meals
     let validMeals = [];
     let mealTotal = 0;
-
     if (Array.isArray(meals) && meals.length > 0) {
       const mealIds = meals.map((m) => m.meal_id);
       const mealQuery = `SELECT id, price FROM meals WHERE id = ANY($1)`;
       const { rows: mealRows } = await pool.query(mealQuery, [mealIds]);
       const mealPriceMap = new Map(mealRows.map((row) => [row.id, parseFloat(row.price)]));
-      console.log("🍽️ Meal Prices from DB:", mealPriceMap);
 
       validMeals = meals
         .filter(({ meal_id, quantity }) => mealPriceMap.has(meal_id) && quantity > 0)
@@ -142,17 +138,22 @@ export const sellTickets = async (req, res) => {
       return res.status(400).json({ message: "No valid tickets or meals to sell" });
     }
 
-    // 🧮 Calculate total
-    const totalAmount = round(ticketTotal + mealTotal);
+    const grossTotal = round(ticketTotal + mealTotal);
+    const discountAmount = round(
+      payments.find((p) => p.method === "discount")?.amount || 0
+    );
+    const finalTotal = round(grossTotal - discountAmount);
 
-    // 💳 Validate payments
-    const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
-    const hasPostponed = payments.some((p) => p.method === "postponed");
-    // ✅ Postponed is now allowed with other methods
+    // 💳 Validate payments (excluding discount)
+    const paidAmount = round(
+      payments
+        .filter((p) => p.method !== "discount")
+        .reduce((sum, p) => sum + Number(p.amount), 0)
+    );
 
-    if (totalPaid !== totalAmount) {
+    if (paidAmount !== finalTotal) {
       return res.status(400).json({
-        message: `Total payments (${totalPaid}) must equal total cost (${totalAmount})`,
+        message: `Paid amount (${paidAmount}) must match final total (${finalTotal})`,
       });
     }
 
@@ -165,11 +166,11 @@ export const sellTickets = async (req, res) => {
     const { rows: orderRows } = await pool.query(orderInsertQuery, [
       user_id,
       description || null,
-      totalAmount,
+      finalTotal,
     ]);
     const order_id = orderRows[0].id;
 
-    // 🎟 Insert tickets if any
+    // 🎟 Insert tickets
     if (validTickets.length > 0) {
       const ticketValues = validTickets.map((row) => [...row, order_id]);
       const ticketInsertQuery = `
@@ -177,19 +178,18 @@ export const sellTickets = async (req, res) => {
         SELECT * FROM UNNEST(
           $1::int[], $2::text[], $3::boolean[], $4::timestamptz[], $5::numeric[], $6::int[]
         )
-        RETURNING *;
       `;
       await pool.query(ticketInsertQuery, [
-        ticketValues.map((row) => row[0]),
-        ticketValues.map((row) => row[1]),
-        ticketValues.map((row) => row[2]),
-        ticketValues.map((row) => row[3]),
-        ticketValues.map((row) => row[4]),
-        ticketValues.map((row) => row[5]),
+        ticketValues.map((r) => r[0]),
+        ticketValues.map((r) => r[1]),
+        ticketValues.map((r) => r[2]),
+        ticketValues.map((r) => r[3]),
+        ticketValues.map((r) => r[4]),
+        ticketValues.map((r) => r[5]),
       ]);
     }
 
-    // 🍽️ Insert meals if any
+    // 🍽️ Insert meals
     if (validMeals.length > 0) {
       const mealInsertQuery = `
         INSERT INTO order_meals (order_id, meal_id, quantity, price_at_order)
@@ -203,7 +203,7 @@ export const sellTickets = async (req, res) => {
       ]);
     }
 
-    // 💵 Insert payments
+    // 💵 Insert payments (including discount)
     const paymentInsertQuery = `
       INSERT INTO payments (order_id, method, amount)
       SELECT * FROM UNNEST($1::int[], $2::payment_method[], $3::numeric[])
@@ -215,14 +215,15 @@ export const sellTickets = async (req, res) => {
     ]);
 
     res.json({
-      message: "Tickets and/or meals sold successfully",
+      message: "Checkout completed with discount support",
       order_id,
-      totalAmount,
-      soldTickets: validTickets.length,
-      soldMeals: validMeals,
+      grossTotal,
+      discountAmount,
+      finalTotal,
+      paidAmount,
     });
-  } catch (error) {
-    console.error("❌ Error selling tickets and meals:", error);
+  } catch (err) {
+    console.error("❌ sellTickets error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
