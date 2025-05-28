@@ -417,132 +417,137 @@ export const generateTickets = async (req, res) => {
   }
 };
 
+/**
+ * Checkout existing tickets by ID
+ * @route POST /api/tickets/checkout-existing
+ * @access Private
+ */
 export const checkoutExistingTickets = async (req, res) => {
+  const client = await pool.connect();
+  
   try {
-    const { ticket_ids, user_id, description, payments, meals = [] } = req.body;
-
-    if (!user_id || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
-      return res.status(400).json({ message: "Missing user ID or ticket IDs" });
+    await client.query('BEGIN');
+    
+    const { ticket_ids, user_id, description, payments, meals } = req.body;
+    
+    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      return res.status(400).json({ message: "No ticket IDs provided" });
     }
-
-    if (!Array.isArray(payments) || payments.length === 0) {
-      return res.status(400).json({ message: "Missing payments" });
+    
+    if (!payments || !Array.isArray(payments) || payments.length === 0) {
+      return res.status(400).json({ message: "Payment information required" });
     }
-
-    const round = (num) => Math.round(num * 100) / 100;
-
-    // ✅ Fetch ticket info
-    const ticketQuery = `
-      SELECT t.id, t.sold_price, t.status, t.valid, tt.price, t.ticket_type_id
-      FROM tickets t
-      JOIN ticket_types tt ON t.ticket_type_id = tt.id
-      WHERE t.id = ANY($1)
-    `;
-    const { rows: ticketRows } = await pool.query(ticketQuery, [ticket_ids]);
-
-    const validTickets = ticketRows.filter(t => t.valid && t.status !== 'sold');
-
-    if (validTickets.length !== ticket_ids.length) {
-      return res.status(400).json({ message: "Some tickets are already sold or invalid" });
+    
+    // Verify all tickets exist and are available
+    const ticketsResult = await client.query(
+      `SELECT id, ticket_type_id, status FROM tickets WHERE id = ANY($1)`,
+      [ticket_ids]
+    );
+    
+    if (ticketsResult.rows.length !== ticket_ids.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "One or more tickets not found" });
     }
-
-    const ticketTotal = round(validTickets.reduce((sum, t) => sum + Number(t.price), 0));
-
-    // ✅ Fetch meal prices
-    let validMeals = [];
-    if (meals.length > 0) {
-      const mealIds = meals.map((m) => m.meal_id);
-      const mealQuery = `SELECT id, price FROM meals WHERE id = ANY($1)`;
-      const { rows: mealRows } = await pool.query(mealQuery, [mealIds]);
-      const mealPriceMap = new Map(mealRows.map((row) => [row.id, parseFloat(row.price)]));
-
-      validMeals = meals
-        .filter(({ meal_id, quantity }) => mealPriceMap.has(meal_id) && quantity > 0)
-        .map(({ meal_id, quantity }) => ({
-          meal_id,
-          quantity,
-          price: mealPriceMap.get(meal_id),
-        }));
-    }
-
-    const mealTotal = round(validMeals.reduce((sum, m) => sum + m.quantity * m.price, 0));
-    const totalAmount = round(ticketTotal + mealTotal);
-
-    // ✅ Validate payments
-    const totalPaid = round(payments.reduce((sum, p) => sum + Number(p.amount), 0));
-    const hasPostponed = payments.some((p) => p.method === "postponed");
-
-    if (hasPostponed && payments.length > 1) {
-      return res.status(400).json({ message: "'Postponed' must be the only payment method" });
-    }
-
-    if (totalPaid !== totalAmount) {
-      return res.status(400).json({
-        message: `Total payments (${totalPaid}) must equal total ticket + meal cost (${totalAmount})`,
+    
+    const unavailableTickets = ticketsResult.rows.filter(t => t.status !== 'available');
+    if (unavailableTickets.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        message: `Tickets not available: ${unavailableTickets.map(t => t.id).join(', ')}` 
       });
     }
+    
+    // Get ticket prices
+    const ticketTypesResult = await client.query(
+      `SELECT tt.id, tt.price, t.id as ticket_id 
+       FROM ticket_types tt
+       JOIN tickets t ON t.ticket_type_id = tt.id
+       WHERE t.id = ANY($1)`,
+      [ticket_ids]
+    );
+    
+    // Calculate total
+    const total = ticketTypesResult.rows.reduce((sum, row) => sum + parseFloat(row.price || 0), 0);
+    
+    // Create order
+    const orderResult = await client.query(
+      `INSERT INTO orders (total_amount, gross_total, user_id, description) 
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [total, total, user_id || null, description || '']
+    );
+    
+    const orderId = orderResult.rows[0].id;
+    
+    // Mark tickets as sold
+    await client.query(
+      `UPDATE tickets 
+       SET status = 'sold', 
+           order_id = $1, 
+           sold_at = CURRENT_TIMESTAMP, 
+           sold_price = (
+             SELECT price FROM ticket_types 
+             WHERE id = tickets.ticket_type_id
+           )
+       WHERE id = ANY($2)`,
+      [orderId, ticket_ids]
+    );
+    
+    // Add payments
+    for (const payment of payments) {
+      await client.query(
+        `INSERT INTO payments (order_id, method, amount) VALUES ($1, $2, $3)`,
+        [orderId, payment.method, payment.amount]
+      );
+    }
+    
+    // Add meals if any
+    if (meals && Array.isArray(meals) && meals.length > 0) {
+      for (const meal of meals) {
+        await client.query(
+          `INSERT INTO order_meals (order_id, meal_id, quantity, price_at_order) 
+           VALUES ($1, $2, $3, $4)`,
+          [orderId, meal.meal_id, meal.quantity, meal.price_at_order]
+        );
+      }
+    }
+    
+    await client.query('COMMIT');
+    res.status(200).json({ 
+      success: true, 
+      message: "Tickets sold successfully", 
+      order_id: orderId 
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error selling tickets:", error);
+    res.status(500).json({ message: "Server error: " + error.message });
+  } finally {
+    client.release();
+  }
+};
 
-    // ✅ Insert order
-    const orderInsertQuery = `
-      INSERT INTO orders (user_id, description, total_amount)
-      VALUES ($1, $2, $3)
-      RETURNING id;
-    `;
-    const { rows: orderRows } = await pool.query(orderInsertQuery, [
-      user_id,
-      description || null,
-      totalAmount,
-    ]);
-    const order_id = orderRows[0].id;
+export const getTicketsByUser = async (req, res) => {
+  const { userId } = req.params;
 
-    // ✅ Update existing tickets
-    const updateTicketsQuery = `
-      UPDATE tickets
-      SET status = 'sold',
-          sold_at = NOW(),
-          sold_price = tt.price,
-          order_id = $2
-      FROM ticket_types tt
-      WHERE tickets.id = ANY($1)
-        AND tickets.ticket_type_id = tt.id
-      RETURNING tickets.*;
-    `;
-    const ticketResult = await pool.query(updateTicketsQuery, [ticket_ids, order_id]);
+  try {
+    const result = await pool.query(
+      `SELECT 
+          t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
+          tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description
+       FROM tickets t
+       LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
+       WHERE t.user_id = $1`,
+      [userId]
+    );
 
-    // ✅ Insert meals
-    if (validMeals.length > 0) {
-      const mealInsertQuery = `
-        INSERT INTO order_meals (order_id, meal_id, quantity, price_at_order)
-        SELECT * FROM UNNEST($1::int[], $2::int[], $3::int[], $4::numeric[])
-      `;
-      await pool.query(mealInsertQuery, [
-        validMeals.map(() => order_id),
-        validMeals.map((m) => m.meal_id),
-        validMeals.map((m) => m.quantity),
-        validMeals.map((m) => m.price),
-      ]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "No tickets found for this user" });
     }
 
-    // ✅ Insert payments
-    const paymentInsertQuery = `
-      INSERT INTO payments (order_id, method, amount)
-      SELECT * FROM UNNEST($1::int[], $2::payment_method[], $3::numeric[])
-    `;
-    await pool.query(paymentInsertQuery, [
-      payments.map(() => order_id),
-      payments.map((p) => p.method),
-      payments.map((p) => p.amount),
-    ]);
-
-    res.json({
-      message: "Existing tickets checked out successfully",
-      order_id,
-      totalAmount,
-      soldTickets: ticketResult.rows,
-      soldMeals: validMeals,
-    });
+    res.json(result.rows);
   } catch (error) {
-    console.error("❌ Error checking out existing tickets:", error);
+    console.error(error);
     res.status(500).json({ message: "Server error" });
   }
 };
