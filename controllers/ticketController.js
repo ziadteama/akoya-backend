@@ -619,7 +619,8 @@ export const getTicketById = async (req, res) => {
     const result = await pool.query(
       `SELECT 
           t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
-          tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description
+          tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description, 
+          tt.price  -- Add this line to include the price
        FROM tickets t
        LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
        WHERE t.id = $1`,
