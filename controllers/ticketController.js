@@ -619,10 +619,15 @@ export const getTicketById = async (req, res) => {
     const result = await pool.query(
       `SELECT 
           t.id, t.status, t.valid, t.sold_at, t.sold_price, t.created_at,
+          t.order_id, -- Include order_id
           tt.id AS ticket_type_id, tt.category, tt.subcategory, tt.description, 
-          tt.price  -- Add this line to include the price
+          tt.price,
+          o.user_id AS sold_by, -- Get user_id from orders table
+          u.name AS sold_by_name -- Get seller's name
        FROM tickets t
        LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
+       LEFT JOIN orders o ON t.order_id = o.id -- Join with orders
+       LEFT JOIN users u ON o.user_id = u.id -- Join with users to get seller name
        WHERE t.id = $1`,
       [id]
     );
