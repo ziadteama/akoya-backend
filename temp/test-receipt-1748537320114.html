@@ -1,0 +1,169 @@
+
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Receipt - Akoya Water Park</title>
+        <meta charset="UTF-8">
+        <style>
+          @page { 
+            size: 80mm auto; 
+            margin: 0; 
+          }
+          body { 
+            margin: 0; 
+            padding: 3mm; 
+            font-family: 'Courier New', monospace; 
+            font-size: 10pt; 
+            width: 74mm;
+            line-height: 1.2;
+            background: white;
+            color: black;
+          }
+          .receipt-content {
+            width: 100%;
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 5mm; 
+          }
+          .title { 
+            font-weight: bold; 
+            font-size: 14pt; 
+            margin-bottom: 2mm; 
+          }
+          .subtitle { 
+            font-size: 9pt; 
+            margin-bottom: 1mm; 
+          }
+          .divider { 
+            border-top: 1px dashed black; 
+            margin: 2mm 0; 
+          }
+          .solid-divider { 
+            border-top: 1px solid black; 
+            margin: 2mm 0; 
+          }
+          .section-title { 
+            font-weight: bold; 
+            margin: 2mm 0 1mm 0; 
+            font-size: 10pt; 
+          }
+          .item-row { 
+            display: flex; 
+            justify-content: space-between; 
+            margin-bottom: 1mm; 
+            font-size: 9pt; 
+          }
+          .item-name { 
+            flex: 1; 
+            padding-right: 2mm; 
+          }
+          .item-price { 
+            white-space: nowrap; 
+          }
+          .total-row { 
+            font-weight: bold; 
+            margin-top: 2mm; 
+            font-size: 11pt; 
+          }
+          .footer { 
+            text-align: center; 
+            margin-top: 3mm; 
+            font-size: 9pt; 
+            font-style: italic; 
+          }
+          @media print { 
+            body { 
+              -webkit-print-color-adjust: exact; 
+              print-color-adjust: exact;
+            } 
+          }
+        </style>
+      </head>
+      <body>
+        <div class="receipt-content">
+          <!-- Header -->
+          <div class="header">
+            <div class="title">AKOYA WATER PARK</div>
+            <div class="subtitle">New Cairo, Egypt</div>
+            <div class="subtitle">Tel: +20 2 XXXX XXXX</div>
+            <div class="subtitle">5/29/2025, 7:48:40 PM</div>
+            <div class="subtitle">Cashier: Test Cashier</div>
+            <div class="subtitle">Order ID: #TEST001</div>
+          </div>
+          
+          <div class="divider"></div>
+          
+          <!-- Items -->
+          <div class="section-title">ORDER ITEMS</div>
+          
+          
+            <div class="item-row">
+              <div class="item-name">Adult - Weekend × 2</div>
+              <div class="item-price">EGP 100.00</div>
+            </div>
+            
+              <div class="item-row" style="font-size: 8pt; color: #666;">
+                <div class="item-name">  2 × EGP 50.00</div>
+                <div class="item-price"></div>
+              </div>
+            
+          
+          
+          
+            <div class="item-row">
+              <div class="item-name">Burger Combo × 1</div>
+              <div class="item-price">EGP 25.00</div>
+            </div>
+          
+          
+          <div class="divider"></div>
+          
+          <!-- Subtotals -->
+          
+            <div class="item-row">
+              <div class="item-name">Tickets:</div>
+              <div class="item-price">EGP 100.00</div>
+            </div>
+          
+          
+          
+            <div class="item-row">
+              <div class="item-name">Meals:</div>
+              <div class="item-price">EGP 25.00</div>
+            </div>
+          
+          
+          
+          
+          <div class="solid-divider"></div>
+          
+          <div class="item-row total-row">
+            <div class="item-name">TOTAL:</div>
+            <div class="item-price">EGP 125.00</div>
+          </div>
+          
+          <div class="divider"></div>
+          
+          <!-- Payment Details -->
+          <div class="section-title">PAYMENT DETAILS</div>
+          
+          
+            <div class="item-row">
+              <div class="item-name">CASH:</div>
+              <div class="item-price">EGP 125.00</div>
+            </div>
+          
+          
+          <div class="divider"></div>
+          
+          <!-- Footer -->
+          <div class="footer">
+            <div>Thank you for visiting</div>
+            <div>Akoya Water Park!</div>
+            <div>Have a wonderful day! 🌊</div>
+          </div>
+        </div>
+      </body>
+    </html>
+  
