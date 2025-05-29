@@ -1,266 +1,203 @@
--- Table: public.users
+-- ENUMs
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'age_group') THEN
+        CREATE TYPE age_group AS ENUM ('child', 'adult', 'senior');
+    END IF;
+END$$;
 
--- DROP TABLE IF EXISTS public.users;
+-- TABLE: users
+CREATE TABLE IF NOT EXISTS public.users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'accountant', 'cashier'))
+);
 
-CREATE TABLE IF NOT EXISTS public.users
-(
-    id integer NOT NULL DEFAULT nextval('users_id_seq'::regclass),
-    name character varying(100) COLLATE pg_catalog."default" NOT NULL,
-    username character varying(50) COLLATE pg_catalog."default" NOT NULL,
-    password_hash text COLLATE pg_catalog."default" NOT NULL,
-    role character varying(20) COLLATE pg_catalog."default" NOT NULL,
-    CONSTRAINT users_pkey PRIMARY KEY (id),
-    CONSTRAINT users_username_key UNIQUE (username),
-    CONSTRAINT users_role_check CHECK (role::text = ANY (ARRAY['admin'::character varying::text, 'accountant'::character varying::text, 'cashier'::character varying::text]))
-)
+-- TABLE: orders
+CREATE TABLE IF NOT EXISTS public.orders (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    total_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+    gross_total NUMERIC(10,2) DEFAULT 0
+);
 
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.users
-    OWNER to postgres;      
-
-    -- Table: public.tickets
-
--- DROP TABLE IF EXISTS public.tickets;
-
-CREATE TABLE IF NOT EXISTS public.tickets
-(
-    id integer NOT NULL DEFAULT nextval('tickets_id_seq'::regclass),
-    ticket_type_id integer,
-    status character varying(20) COLLATE pg_catalog."default" DEFAULT 'available'::character varying,
-    valid boolean DEFAULT true,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    sold_at timestamp without time zone,
-    sold_price numeric(10,2),
-    order_id integer,
-    CONSTRAINT tickets_pkey PRIMARY KEY (id),
-    CONSTRAINT fk_order FOREIGN KEY (order_id)
-        REFERENCES public.orders (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE CASCADE,
-    CONSTRAINT tickets_ticket_type_id_fkey FOREIGN KEY (ticket_type_id)
-        REFERENCES public.ticket_types (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE CASCADE,
-    CONSTRAINT tickets_status_check CHECK (status::text = ANY (ARRAY['available'::character varying::text, 'sold'::character varying::text]))
-)
-
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.tickets
-    OWNER to postgres;
-
--- Trigger: gross_total_ticket_trigger
-
--- DROP TRIGGER IF EXISTS gross_total_ticket_trigger ON public.tickets;
-
-CREATE OR REPLACE TRIGGER gross_total_ticket_trigger
-    AFTER INSERT OR DELETE OR UPDATE 
-    ON public.tickets
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_order_gross_total();
-
--- Trigger: ticket_status_update
-
--- DROP TRIGGER IF EXISTS ticket_status_update ON public.tickets;
-
-CREATE OR REPLACE TRIGGER ticket_status_update
-    BEFORE UPDATE 
-    ON public.tickets
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_sold_ticket();
-
--- Trigger: ticket_total_trigger
-
--- DROP TRIGGER IF EXISTS ticket_total_trigger ON public.tickets;
-
-CREATE OR REPLACE TRIGGER ticket_total_trigger
-    AFTER INSERT OR DELETE OR UPDATE 
-    ON public.tickets
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_order_total();
-
--- Trigger: trg_update_order_total_delete
-
--- DROP TRIGGER IF EXISTS trg_update_order_total_delete ON public.tickets;
-
-CREATE OR REPLACE TRIGGER trg_update_order_total_delete
-    AFTER DELETE
-    ON public.tickets
-    FOR EACH ROW
-    WHEN (old.order_id IS NOT NULL)
-    EXECUTE FUNCTION public.update_order_total();
-
--- Trigger: trigger_reset_sold_details
-
--- DROP TRIGGER IF EXISTS trigger_reset_sold_details ON public.tickets;
-
-CREATE OR REPLACE TRIGGER trigger_reset_sold_details
-    BEFORE UPDATE 
-    ON public.tickets
-    FOR EACH ROW
-    EXECUTE FUNCTION public.reset_sold_details();
-
--- Trigger: trigger_set_created_at
-
--- DROP TRIGGER IF EXISTS trigger_set_created_at ON public.tickets;
-
-CREATE OR REPLACE TRIGGER trigger_set_created_at
-    BEFORE INSERT
-    ON public.tickets
-    FOR EACH ROW
-    EXECUTE FUNCTION public.set_created_at();
-
--- Trigger: trigger_update_sold_at
-
--- DROP TRIGGER IF EXISTS trigger_update_sold_at ON public.tickets;
-
-CREATE OR REPLACE TRIGGER trigger_update_sold_at
-    BEFORE UPDATE 
-    ON public.tickets
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_sold_at();
-
-    -- Table: public.ticket_types
-
--- DROP TABLE IF EXISTS public.ticket_types;
-
-CREATE TABLE IF NOT EXISTS public.ticket_types
-(
-    id integer NOT NULL DEFAULT nextval('ticket_types_id_seq'::regclass),
-    category character varying(50) COLLATE pg_catalog."default" NOT NULL,
-    subcategory character varying(50) COLLATE pg_catalog."default" NOT NULL,
-    price numeric(10,2) NOT NULL,
-    description text COLLATE pg_catalog."default",
-    archived boolean NOT NULL DEFAULT false,
-    CONSTRAINT ticket_types_pkey PRIMARY KEY (id),
-    CONSTRAINT unique_category_subcategory UNIQUE (category, subcategory),
-    CONSTRAINT ticket_types_subcategory_check CHECK (subcategory::text = ANY (ARRAY['child'::character varying::text, 'grand'::character varying::text, 'adult'::character varying::text]))
-)
-
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.ticket_types
-    OWNER to postgres;
-
-    -- Table: public.payments
-
--- DROP TABLE IF EXISTS public.payments;
-
-CREATE TABLE IF NOT EXISTS public.payments
-(
-    id integer NOT NULL DEFAULT nextval('payments_id_seq'::regclass),
-    order_id integer NOT NULL,
-    method payment_method NOT NULL,
-    amount numeric(10,2) NOT NULL,
-    CONSTRAINT payments_pkey PRIMARY KEY (id),
-    CONSTRAINT payments_order_id_fkey FOREIGN KEY (order_id)
-        REFERENCES public.orders (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE CASCADE,
-    CONSTRAINT payments_amount_check CHECK (amount > 0::numeric)
-)
-
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.payments
-    OWNER to postgres;
-
--- Trigger: payment_total_trigger
-
--- DROP TRIGGER IF EXISTS payment_total_trigger ON public.payments;
-
-CREATE OR REPLACE TRIGGER payment_total_trigger
-    AFTER INSERT OR DELETE OR UPDATE 
-    ON public.payments
-    FOR EACH ROW
-    EXECUTE FUNCTION public.update_order_total();
-
-    -- Table: public.orders
-
--- DROP TABLE IF EXISTS public.orders;
-
-CREATE TABLE IF NOT EXISTS public.orders
-(
-    id integer NOT NULL DEFAULT nextval('orders_id_seq'::regclass),
-    user_id integer,
-    description text COLLATE pg_catalog."default",
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    total_amount numeric(10,2) NOT NULL DEFAULT 0,
-    gross_total numeric(10,2) DEFAULT 0,
-    CONSTRAINT orders_pkey PRIMARY KEY (id),
-    CONSTRAINT fk_user FOREIGN KEY (user_id)
-        REFERENCES public.users (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE SET NULL
-)
-
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.orders
-    OWNER to postgres;
-
-    -- Table: public.orders
-
--- DROP TABLE IF EXISTS public.orders;
-
-CREATE TABLE IF NOT EXISTS public.orders
-(
-    id integer NOT NULL DEFAULT nextval('orders_id_seq'::regclass),
-    user_id integer,
-    description text COLLATE pg_catalog."default",
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    total_amount numeric(10,2) NOT NULL DEFAULT 0,
-    gross_total numeric(10,2) DEFAULT 0,
-    CONSTRAINT orders_pkey PRIMARY KEY (id),
-    CONSTRAINT fk_user FOREIGN KEY (user_id)
-        REFERENCES public.users (id) MATCH SIMPLE
-        ON UPDATE NO ACTION
-        ON DELETE SET NULL
-)
-
-TABLESPACE pg_default;
-
-ALTER TABLE IF EXISTS public.orders
-    OWNER to postgres;
-
-    -- Table: public.meals
-
--- DROP TABLE IF EXISTS public.meals;
-
-CREATE TABLE IF NOT EXISTS public.meals
-(
-    id integer NOT NULL DEFAULT nextval('meals_id_seq'::regclass),
-    name text COLLATE pg_catalog."default" NOT NULL,
-    description text COLLATE pg_catalog."default",
-    price numeric(10,2) NOT NULL,
+-- TABLE: meals
+CREATE TABLE IF NOT EXISTS public.meals (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    price NUMERIC(10,2) NOT NULL,
     age_group age_group NOT NULL,
-    archived boolean DEFAULT false,
-    CONSTRAINT meals_pkey PRIMARY KEY (id)
-)
+    archived BOOLEAN DEFAULT false
+);
 
-TABLESPACE pg_default;
+-- TABLE: order_meals
+CREATE TABLE IF NOT EXISTS public.order_meals (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    meal_id INTEGER NOT NULL REFERENCES public.meals(id),
+    quantity INTEGER DEFAULT 1 NOT NULL,
+    price_at_order NUMERIC(10,2) NOT NULL,
+    total_price NUMERIC(10,2)
+);
 
-ALTER TABLE IF EXISTS public.meals
-    OWNER to postgres;
+-- TABLE: ticket_types
+CREATE TABLE IF NOT EXISTS public.ticket_types (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    price NUMERIC(10,2) NOT NULL
+);
 
+-- TABLE: tickets
+CREATE TABLE IF NOT EXISTS public.tickets (
+    id SERIAL PRIMARY KEY,
+    ticket_type_id INTEGER REFERENCES public.ticket_types(id) ON DELETE CASCADE,
+    status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'sold')),
+    valid BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    sold_at TIMESTAMP,
+    sold_price NUMERIC(10,2),
+    order_id INTEGER REFERENCES public.orders(id) ON DELETE CASCADE
+);
 
-    ALTER TABLE tickets DISABLE TRIGGER ALL;
+-- FUNCTIONS
+CREATE OR REPLACE FUNCTION public.calculate_order_meal_total()
+RETURNS trigger AS $$
+BEGIN
+    NEW.total_price := NEW.price_at_order * NEW.quantity;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION public.update_order_total()
+RETURNS trigger AS $$
+BEGIN
+    UPDATE public.orders
+    SET total_amount = COALESCE((
+        SELECT SUM(COALESCE(total_price, 0)) FROM public.order_meals WHERE order_id = NEW.order_id
+    ), 0)
+    + COALESCE((
+        SELECT SUM(COALESCE(sold_price, 0)) FROM public.tickets WHERE order_id = NEW.order_id
+    ), 0)
+    WHERE id = NEW.order_id;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
 
-INSERT INTO tickets (id)
-SELECT generate_series(1, 50000);
+CREATE OR REPLACE FUNCTION public.update_order_gross_total()
+RETURNS trigger AS $$
+BEGIN
+    UPDATE public.orders
+    SET gross_total = COALESCE((
+        SELECT COUNT(*) FROM public.tickets WHERE order_id = NEW.order_id
+    ), 0) * 100  -- placeholder logic
+    WHERE id = NEW.order_id;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION public.update_sold_ticket()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.status = 'sold' AND OLD.status <> 'sold' THEN
+        NEW.sold_at := NOW();
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-ALTER TABLE tickets ENABLE TRIGGER ALL;
+CREATE OR REPLACE FUNCTION public.reset_sold_details()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.status = 'available' THEN
+        NEW.sold_at := NULL;
+        NEW.sold_price := NULL;
+        NEW.order_id := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION public.set_created_at()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.created_at IS NULL THEN
+        NEW.created_at := NOW();
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-SELECT setval('tickets_id_seq', 50000, true);
+CREATE OR REPLACE FUNCTION public.update_sold_at()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.status = 'sold' THEN
+        NEW.sold_at := CURRENT_TIMESTAMP;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
+-- TRIGGERS
+CREATE TRIGGER set_total_price_on_insert
+BEFORE INSERT OR UPDATE ON public.order_meals
+FOR EACH ROW EXECUTE FUNCTION public.calculate_order_meal_total();
 
+CREATE TRIGGER meal_total_trigger
+AFTER INSERT OR DELETE OR UPDATE ON public.order_meals
+FOR EACH ROW EXECUTE FUNCTION public.update_order_total();
 
--- Pre-hashed version (if you're hashing from backend)
-INSERT INTO public.users (name, username, password_hash, role)
-VALUES 
-  ('Teama', 'heshamteama', '$2a$10$l1Ju15HA/e0giro2KalGie./7rpRChi0eqvqiB1HYwRD8gXV3W.Cm', 'admin'),
-  ('Mohamed Abdelgawad', 'moabdelgawad', '$2a$10$oxMcj3oeItXhh/LhAJzjZeOSZRBzKgOewwOhni0tngb83BLmLVR6y', 'accountant');
+CREATE TRIGGER trg_update_order_total_meals_delete
+AFTER DELETE ON public.order_meals
+FOR EACH ROW WHEN (OLD.order_id IS NOT NULL)
+EXECUTE FUNCTION public.update_order_total();
+
+CREATE TRIGGER gross_total_meal_trigger
+AFTER INSERT OR DELETE OR UPDATE ON public.order_meals
+FOR EACH ROW EXECUTE FUNCTION public.update_order_gross_total();
+
+CREATE TRIGGER ticket_total_trigger
+AFTER INSERT OR DELETE OR UPDATE ON public.tickets
+FOR EACH ROW EXECUTE FUNCTION public.update_order_total();
+
+CREATE TRIGGER trg_update_order_total_delete
+AFTER DELETE ON public.tickets
+FOR EACH ROW WHEN (OLD.order_id IS NOT NULL)
+EXECUTE FUNCTION public.update_order_total();
+
+CREATE TRIGGER gross_total_ticket_trigger
+AFTER INSERT OR DELETE OR UPDATE ON public.tickets
+FOR EACH ROW EXECUTE FUNCTION public.update_order_gross_total();
+
+CREATE TRIGGER ticket_status_update
+BEFORE UPDATE ON public.tickets
+FOR EACH ROW EXECUTE FUNCTION public.update_sold_ticket();
+
+CREATE TRIGGER trigger_reset_sold_details
+BEFORE UPDATE ON public.tickets
+FOR EACH ROW EXECUTE FUNCTION public.reset_sold_details();
+
+CREATE TRIGGER trigger_set_created_at
+BEFORE INSERT ON public.tickets
+FOR EACH ROW EXECUTE FUNCTION public.set_created_at();
+
+CREATE TRIGGER trigger_update_sold_at
+BEFORE UPDATE ON public.tickets
+FOR EACH ROW EXECUTE FUNCTION public.update_sold_at();
+
+-- USERS
+INSERT INTO public.users (name, username, password_hash, role) VALUES
+('Admin User', 'admin', 'hashed_password1', 'admin'),
+('Accountant User', 'accountant', 'hashed_password2', 'accountant');
+
+-- BULK TICKETS
+DO $$
+BEGIN
+  FOR i IN 1..50000 LOOP
+    INSERT INTO public.tickets (status, valid) VALUES ('available', true);
+  END LOOP;
+END$$;
